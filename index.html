@@ -364,6 +364,8 @@
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzcR56CAfJxU7wDmZmjI06NbsKMFtiRxsX1oQnaRX8ITIBRFvIggOq7KB75PeJmTM10OA/exec";
 
     let autoRefreshInterval = null;
+    let cachedBookings = null;
+    let lastFetchTime = 0;
 
     window.onload = function() {
         const today = new Date().toISOString().split('T')[0];
@@ -435,14 +437,21 @@
         }
     }
 
-    async function fetchBookingsFromSheet() {
+    // دالة سريعة لجلب البيانات مع تخزين مؤقت لتقليل وقت التحميل
+    async function fetchBookingsFromSheet(forceRefresh = false) {
+        const now = new Date().getTime();
+        if (!forceRefresh && cachedBookings && (now - lastFetchTime < 4000)) {
+            return cachedBookings;
+        }
         try {
-            const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
+            const response = await fetch(WEB_APP_URL + "?t=" + now);
             const data = await response.json();
-            return Array.isArray(data) ? data : [];
+            cachedBookings = Array.isArray(data) ? data : [];
+            lastFetchTime = now;
+            return cachedBookings;
         } catch (e) {
             console.error("Error fetching from sheet:", e);
-            return [];
+            return cachedBookings || [];
         }
     }
 
@@ -485,9 +494,9 @@
         return 30;
     }
 
-    // دالة حساب الميعاد الذكي المشتركة
+    // حساب الميعاد الذكي ببيانات فورية
     async function calculateSmartTimeSlot(date, duration) {
-        let allBookingsList = await fetchBookingsFromSheet();
+        let allBookingsList = await fetchBookingsFromSheet(true);
         const dayBookings = allBookingsList
             .filter(b => String(b.date).split('T')[0].trim() === String(date).trim())
             .map(b => {
@@ -564,7 +573,7 @@
 
         const submitBtn = document.getElementById('submitBookingBtn');
         submitBtn.disabled = true;
-        submitBtn.innerText = 'جاري حساب الجدول الزمني الذكي... ⏳';
+        submitBtn.innerText = 'جاري الحجز السريع... ⏳';
 
         const slot = await calculateSmartTimeSlot(date, duration);
 
@@ -596,13 +605,17 @@
         };
 
         try {
-            await fetch(WEB_APP_URL, {
+            // إرسال مباشر وسريع جداً بدون تأخيرات مصطنعة
+            fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // تحديث الكاش المحلي فوراً لكي يظهر الحجز الجديد في لوحة التحكم بسلاسة
+            if(!cachedBookings) cachedBookings = [];
+            cachedBookings.push(newBooking);
         } catch (e) {
             console.error(e);
         }
@@ -633,7 +646,6 @@
         document.getElementById('paymentRef').value = '';
     }
 
-    // تسجيل مريض Walk-in مباشر من لوحة التحكم
     async function submitWalkinAppointment() {
         const name = document.getElementById('walkinName').value.trim();
         const phone = document.getElementById('walkinPhone').value.trim();
@@ -675,17 +687,18 @@
         };
 
         try {
-            await fetch(WEB_APP_URL, {
+            fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            if(!cachedBookings) cachedBookings = [];
+            cachedBookings.push(newBooking);
+
             closeWalkinModal();
             document.getElementById('walkinName').value = '';
             document.getElementById('walkinPhone').value = '';
-            alert('تم تسجيل مريض Walk-in بنجاح في الميعاد: ' + assignedTimeStr);
             renderDashboardTable();
         } catch (e) {
             console.error(e);
@@ -693,10 +706,16 @@
         }
     }
 
-    // زر تغيير حالة الحجز بنقرة واحدة (تأكيد / انتظار)
     async function toggleBookingStatus(bookingId, currentStatus, queueNum, name, phone, service, price, date, time, deposit, paymentRef, duration) {
         const newStatus = (currentStatus.trim() === 'confirmed') ? 'pending' : 'confirmed';
         
+        // تحديث فورى محلياً لسرعة الاستجابة بالواجهة
+        if (cachedBookings) {
+            let found = cachedBookings.find(b => String(b.id) === String(bookingId));
+            if(found) found.status = newStatus;
+        }
+        renderDashboardTable(true);
+
         const updatedBooking = {
             id: bookingId,
             date: date,
@@ -712,40 +731,32 @@
             queueNum: queueNum
         };
 
-        // حذف القديم أولاً ثم إضافة المحدث أو إرسال طلب تحديث
         try {
-            // أولاً نحذف الصف القديم
-            await fetch(WEB_APP_URL, {
+            fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'delete', id: bookingId })
             });
-            await new Promise(resolve => setTimeout(resolve, 1000));
 
-            // ثانياً نضيفه بالحالة الجديدة
-            await fetch(WEB_APP_URL, {
+            fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatedBooking)
             });
-            await new Promise(resolve => setTimeout(resolve, 1500));
-
-            renderDashboardTable();
         } catch (e) {
             console.error(e);
-            alert('حدث خطأ أثناء تغيير الحالة.');
         }
     }
 
     async function renderDashboardTable(isBackground = false) {
         const tbody = document.getElementById('appointmentsTableBody');
         if (!isBackground) {
-            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث من Google Sheet...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث السريع...</td></tr>`;
         }
         
-        let allBookingsList = await fetchBookingsFromSheet();
+        let allBookingsList = await fetchBookingsFromSheet(true);
 
         let totalDeposit = 0;
         let totalRevenue = 0;
@@ -821,23 +832,23 @@
     }
 
     async function deleteBookingRow(bookingId) {
-        if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً من العيادة وشيت جوجل؟')) return;
+        if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً؟')) return;
         
+        // تحديث محلي فوري لإخفاء الصف بسرعة
+        if (cachedBookings) {
+            cachedBookings = cachedBookings.filter(b => String(b.id) !== String(bookingId));
+        }
+        renderDashboardTable(true);
+
         try {
-            await fetch(WEB_APP_URL, {
+            fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'delete', id: bookingId })
             });
-            
-            alert('تم الحذف بنجاح من الشيت والنظام!');
-            setTimeout(() => {
-                renderDashboardTable();
-            }, 1000);
         } catch (e) {
             console.error("Error deleting:", e);
-            alert('حدث خطأ أثناء محاولة الحذف.');
         }
     }
 
