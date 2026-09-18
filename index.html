@@ -426,6 +426,16 @@
         return `${formattedH}:${formattedM} ${period}`;
     }
 
+    function getServiceDurationFromName(serviceName) {
+        if (!serviceName) return 30;
+        if (serviceName.includes('عصب')) return 60;
+        if (serviceName.includes('تبييض') || serviceName.includes('جراحي') || serviceName.includes('لثة')) return 45;
+        if (serviceName.includes('كشف')) return 15;
+        if (serviceName.includes('خلع عادي')) return 20;
+        if (serviceName.includes('تركيبات') || serviceName.includes('تجميلي') || serviceName.includes('تنظيف جير')) return 30;
+        return 30;
+    }
+
     async function autoBookAppointment() {
         const name = document.getElementById('patientName').value.trim();
         const phone = document.getElementById('patientPhone').value.trim();
@@ -455,12 +465,15 @@
 
         let allBookingsList = await fetchBookingsFromSheet();
 
-        // تصفية حجوزات اليوم المحدد بدقة وترتيبها تنازلياً/تصاعدياً بالدقائق
+        // تصفية حجوزات اليوم المحدد بدقة تامة ومقارنة التواريخ كنصوص نظيفة
         const dayBookings = allBookingsList
-            .filter(b => String(b.date).trim() === String(date).trim())
+            .filter(b => {
+                let sheetDate = String(b.date).split('T')[0].trim();
+                return sheetDate === String(date).trim();
+            })
             .map(b => {
                 let start = parseTimeToMinutes(b.time);
-                let dur = parseInt(b.duration) || 30; // لو المدة متوفرة أو استنتاجية
+                let dur = parseInt(b.duration) || getServiceDurationFromName(b.service);
                 return {
                     startMin: start,
                     endMin: start + dur
@@ -470,7 +483,7 @@
 
         const CLINIC_START = 14 * 60; // 2:00 ظهراً (840 دقيقة)
         const CLINIC_END = 22 * 60;   // 10:00 مساءً (1320 دقيقة)
-        const BUFFER = 10;            // 10 دقائق استراحة بين المواعيد
+        const BUFFER = 10;            // 10 دقائق استراحة إجبارية
 
         let assignedStart = -1;
         let assignedEnd = -1;
@@ -479,7 +492,7 @@
             assignedStart = CLINIC_START;
             assignedEnd = CLINIC_START + duration;
         } else {
-            // محاولة الحجز في البداية قبل أول مريض
+            // محاولة الحجز في البداية قبل أول مريض في اليوم
             if (dayBookings[0].startMin - CLINIC_START >= duration) {
                 assignedStart = CLINIC_START;
                 assignedEnd = CLINIC_START + duration;
@@ -499,7 +512,7 @@
                     }
                 }
 
-                // لو ملقاش فجوة، يحط الحجز بعد آخر مريض
+                // لو ملقاش فجوة، يحط الحجز بعد آخر مريض خالص في الجدول
                 if (!foundGap) {
                     let lastBooking = dayBookings[dayBookings.length - 1];
                     let potentialStart = Math.max(CLINIC_START, lastBooking.endMin + BUFFER);
@@ -595,7 +608,9 @@
         }
 
         let sortedList = [...allBookingsList].sort((a, b) => {
-            if (a.date !== b.date) return String(a.date).localeCompare(String(b.date));
+            let dateA = String(a.date).split('T')[0];
+            let dateB = String(b.date).split('T')[0];
+            if (dateA !== dateB) return dateA.localeCompare(dateB);
             return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
         });
 
@@ -604,8 +619,9 @@
         let queueCounter = 1;
 
         sortedList.forEach((b) => {
-            if (currentDayTracker !== b.date) {
-                currentDayTracker = b.date;
+            let cleanDate = String(b.date).split('T')[0];
+            if (currentDayTracker !== cleanDate) {
+                currentDayTracker = cleanDate;
                 queueCounter = 1;
             }
 
@@ -620,12 +636,12 @@
                 : `<span class="status-badge status-pending">انتظار ⏳</span>`;
 
             let cleanPhone = String(b.phone).startsWith('0') ? '2' + b.phone : b.phone;
-            let waMsg = encodeURIComponent(`مرحباً يا ${b.name}، تم تأكيد حجزك برقم دور (${queueCounter}) في عيادة Peter Dental Zone برقم كود (#${b.id}) في تاريخ ${b.date} الساعة ${b.time}. برجاء الحضور قبل الميعاد بـ 10 دقائق وأخذ سكرين شوت للإيصال. ننتظر زيارتك! ✨`);
+            let waMsg = encodeURIComponent(`مرحباً يا ${b.name}، تم تأكيد حجزك برقم دور (${queueCounter}) في عيادة Peter Dental Zone برقم كود (#${b.id}) في تاريخ ${cleanDate} الساعة ${b.time}. برجاء الحضور قبل الميعاد بـ 10 دقائق وأخذ سكرين شوت للإيصال. ننتظر زيارتك! ✨`);
             let waLink = `https://wa.me/${cleanPhone}?text=${waMsg}`;
 
             html += `
                 <tr>
-                    <td><span class="queue-badge">${queueCounter}</span><br><small>${b.date}</small></td>
+                    <td><span class="queue-badge">${queueCounter}</span><br><small>${cleanDate}</small></td>
                     <td><b>#${b.id}</b></td>
                     <td>${b.name}</td>
                     <td>${b.phone}</td>
@@ -635,7 +651,7 @@
                     <td>${statusBadge}</td>
                     <td>
                         <a href="${waLink}" target="_blank" class="btn-whatsapp">واتساب 💬</a>
-                        <button class="btn-print" onclick="printReceiptDirect('${b.id}', '${queueCounter}', '${b.name}', '${b.phone}', '${b.service}', '${b.price}', '${b.date}', '${b.time}', '${b.deposit}', '${b.status}')">طباعة 🖨️</button>
+                        <button class="btn-print" onclick="printReceiptDirect('${b.id}', '${queueCounter}', '${b.name}', '${b.phone}', '${b.service}', '${b.price}', '${cleanDate}', '${b.time}', '${b.deposit}', '${b.status}')">طباعة 🖨️</button>
                         <button class="btn-delete" onclick="deleteBookingRow('${b.id}')">حذف 🗑️</button>
                     </td>
                 </tr>
@@ -716,7 +732,8 @@
         let allBookingsList = await fetchBookingsFromSheet();
         const booking = allBookingsList.find(b => String(b.id) === String(bookingId));
         if (!booking) return;
-        printReceiptDirect(booking.id, 1, booking.name, booking.phone, booking.service, booking.price, booking.date, booking.time, booking.deposit, booking.status);
+        let cleanDate = String(booking.date).split('T')[0];
+        printReceiptDirect(booking.id, 1, booking.name, booking.phone, booking.service, booking.price, cleanDate, booking.time, booking.deposit, booking.status);
     }
 </script>
 
