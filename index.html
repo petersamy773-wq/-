@@ -121,6 +121,11 @@
             background-color: var(--primary-dark);
         }
 
+        button.action-btn:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+
         #summary {
             margin-top: 20px;
             padding: 15px;
@@ -260,7 +265,7 @@
                 <label>تاريخ الحجز:</label>
                 <input type="date" id="walkinDate">
             </div>
-            <button class="action-btn" onclick="submitWalkinAppointment()">تسجيل الحجز فوراً</button>
+            <button class="action-btn" id="walkinSubmitBtn" onclick="submitWalkinAppointment()">تسجيل الحجز فوراً</button>
             <button onclick="closeWalkinModal()" style="background:#7f8c8d; color:white; border:none; padding:8px; width:100%; border-radius:6px; margin-top:5px; cursor:pointer;">إلغاء</button>
         </div>
     </div>
@@ -314,7 +319,7 @@
             <h3 style="color: var(--primary-dark); margin: 0;">لوحة تحكم عيادة Peter Dental Zone</h3>
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                 <button class="btn-walkin" onclick="openWalkinModal()">➕ إضافة مريض Walk-in</button>
-                <button class="btn-refresh" onclick="renderDashboardTable()">🔄 تحديث الآن</button>
+                <button class="btn-refresh" onclick="renderDashboardTable(true)">🔄 تحديث الآن</button>
                 <button onclick="switchTab('booking')" style="background: #7f8c8d; color: white; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer;">العودة للحجز 🔙</button>
             </div>
         </div>
@@ -350,7 +355,7 @@
                     </tr>
                 </thead>
                 <tbody id="appointmentsTableBody">
-                    <tr><td colspan="9" style="padding: 20px; color: #777;">جاري تحميل البيانات من الشيت...</td></tr>
+                    <tr><td colspan="9" style="padding: 20px; color: #777;">جاري تحميل البيانات...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -364,8 +369,9 @@
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzcR56CAfJxU7wDmZmjI06NbsKMFtiRxsX1oQnaRX8ITIBRFvIggOq7KB75PeJmTM10OA/exec";
 
     let autoRefreshInterval = null;
-    let cachedBookings = null;
-    let lastFetchTime = 0;
+    let cachedBookings = [];
+    let isFetching = false;
+    let isSubmitting = false; // قفل منع تكرار الضغط
 
     window.onload = function() {
         const today = new Date().toISOString().split('T')[0];
@@ -428,31 +434,29 @@
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
         } else {
             document.getElementById('dashboardSection').classList.add('active');
-            renderDashboardTable();
+            renderDashboardTable(true);
             
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
             autoRefreshInterval = setInterval(() => {
-                renderDashboardTable(true);
-            }, 10000);
+                renderDashboardTable(false); // تحديث صامت بالخلفية بدون إظهار رسالة جاري التحميل
+            }, 15000);
         }
     }
 
-    // دالة سريعة لجلب البيانات مع تخزين مؤقت لتقليل وقت التحميل
-    async function fetchBookingsFromSheet(forceRefresh = false) {
-        const now = new Date().getTime();
-        if (!forceRefresh && cachedBookings && (now - lastFetchTime < 4000)) {
-            return cachedBookings;
-        }
+    // جلب البيانات مع مانع التداخل (Mutex Lock) لسرعة صاروخية وعدم التعليق
+    async function fetchBookingsFromSheet(force = false) {
+        if (isFetching && !force) return cachedBookings;
+        isFetching = true;
         try {
-            const response = await fetch(WEB_APP_URL + "?t=" + now);
+            const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
             const data = await response.json();
             cachedBookings = Array.isArray(data) ? data : [];
-            lastFetchTime = now;
-            return cachedBookings;
         } catch (e) {
-            console.error("Error fetching from sheet:", e);
-            return cachedBookings || [];
+            console.error("Error fetching:", e);
+        } finally {
+            isFetching = false;
         }
+        return cachedBookings;
     }
 
     function parseTimeToMinutes(timeStr) {
@@ -494,7 +498,6 @@
         return 30;
     }
 
-    // حساب الميعاد الذكي ببيانات فورية
     async function calculateSmartTimeSlot(date, duration) {
         let allBookingsList = await fetchBookingsFromSheet(true);
         const dayBookings = allBookingsList
@@ -549,6 +552,8 @@
     }
 
     async function autoBookAppointment() {
+        if (isSubmitting) return; // منع الضغط المتكرر
+        
         const name = document.getElementById('patientName').value.trim();
         const phone = document.getElementById('patientPhone').value.trim();
         const select = document.getElementById('serviceSelect');
@@ -571,16 +576,18 @@
         const price = parseInt(select.options[select.selectedIndex].getAttribute('data-price'));
         const deposit = price * 0.20; 
 
+        isSubmitting = true;
         const submitBtn = document.getElementById('submitBookingBtn');
         submitBtn.disabled = true;
-        submitBtn.innerText = 'جاري الحجز السريع... ⏳';
+        submitBtn.innerText = 'جاري الحجز الفوري... ⏳';
 
         const slot = await calculateSmartTimeSlot(date, duration);
 
         if (slot.assignedStart === -1 || slot.assignedEnd > 1320) {
-            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً أو لا توجد فترة متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
+            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
+            isSubmitting = false;
             return;
         }
 
@@ -605,7 +612,6 @@
         };
 
         try {
-            // إرسال مباشر وسريع جداً بدون تأخيرات مصطنعة
             fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
@@ -613,8 +619,6 @@
                 body: JSON.stringify(newBooking)
             });
             
-            // تحديث الكاش المحلي فوراً لكي يظهر الحجز الجديد في لوحة التحكم بسلاسة
-            if(!cachedBookings) cachedBookings = [];
             cachedBookings.push(newBooking);
         } catch (e) {
             console.error(e);
@@ -622,6 +626,7 @@
 
         submitBtn.disabled = false;
         submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
+        isSubmitting = false;
 
         const summaryDiv = document.getElementById('summary');
         summaryDiv.style.display = 'block';
@@ -647,6 +652,8 @@
     }
 
     async function submitWalkinAppointment() {
+        if (isSubmitting) return;
+        
         const name = document.getElementById('walkinName').value.trim();
         const phone = document.getElementById('walkinPhone').value.trim();
         const select = document.getElementById('walkinService');
@@ -662,9 +669,11 @@
         const price = parseInt(select.options[select.selectedIndex].getAttribute('data-price'));
         const deposit = price * 0.20;
 
+        isSubmitting = true;
         const slot = await calculateSmartTimeSlot(date, duration);
         if (slot.assignedStart === -1) {
             alert('عذراً، أوقات العيادة لهذا اليوم مكتملة!');
+            isSubmitting = false;
             return;
         }
 
@@ -693,27 +702,24 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            if(!cachedBookings) cachedBookings = [];
             cachedBookings.push(newBooking);
 
             closeWalkinModal();
             document.getElementById('walkinName').value = '';
             document.getElementById('walkinPhone').value = '';
-            renderDashboardTable();
+            renderDashboardTable(true);
         } catch (e) {
             console.error(e);
-            alert('حدث خطأ أثناء التسجيل.');
+        } finally {
+            isSubmitting = false;
         }
     }
 
     async function toggleBookingStatus(bookingId, currentStatus, queueNum, name, phone, service, price, date, time, deposit, paymentRef, duration) {
         const newStatus = (currentStatus.trim() === 'confirmed') ? 'pending' : 'confirmed';
         
-        // تحديث فورى محلياً لسرعة الاستجابة بالواجهة
-        if (cachedBookings) {
-            let found = cachedBookings.find(b => String(b.id) === String(bookingId));
-            if(found) found.status = newStatus;
-        }
+        let found = cachedBookings.find(b => String(b.id) === String(bookingId));
+        if(found) found.status = newStatus;
         renderDashboardTable(true);
 
         const updatedBooking = {
@@ -750,19 +756,19 @@
         }
     }
 
-    async function renderDashboardTable(isBackground = false) {
+    async function renderDashboardTable(showLoading = false) {
         const tbody = document.getElementById('appointmentsTableBody');
-        if (!isBackground) {
-            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث السريع...</td></tr>`;
+        if (showLoading && cachedBookings.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحميل...</td></tr>`;
         }
         
-        let allBookingsList = await fetchBookingsFromSheet(true);
+        let allBookingsList = await fetchBookingsFromSheet(showLoading);
 
         let totalDeposit = 0;
         let totalRevenue = 0;
 
         if (!allBookingsList || allBookingsList.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" style="color: #777; padding: 15px;">لا توجد حجوزات مسجلة حالياً في الشيت.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="color: #777; padding: 15px;">لا توجد حجوزات مسجلة حالياً.</td></tr>`;
             document.getElementById('totalDepositBox').innerText = '0 جنيه';
             document.getElementById('totalRevenueBox').innerText = '0 جنيه';
             document.getElementById('totalCountBox').innerText = '0';
@@ -834,11 +840,8 @@
     async function deleteBookingRow(bookingId) {
         if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً؟')) return;
         
-        // تحديث محلي فوري لإخفاء الصف بسرعة
-        if (cachedBookings) {
-            cachedBookings = cachedBookings.filter(b => String(b.id) !== String(bookingId));
-        }
-        renderDashboardTable(true);
+        cachedBookings = cachedBookings.filter(b => String(b.id) !== String(bookingId));
+        renderDashboardTable(false);
 
         try {
             fetch(WEB_APP_URL, {
