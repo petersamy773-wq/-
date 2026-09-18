@@ -191,6 +191,7 @@
         .btn-whatsapp { background: var(--whatsapp); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; margin-bottom: 3px;}
         .btn-print { background: #3498db; color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
         .btn-delete { background: var(--danger); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
+        .btn-refresh { background: #2980b9; color: var(--white); border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer; }
 
         .status-badge { padding: 3px 6px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block; }
         .status-pending { background: var(--warning); color: var(--white); }
@@ -272,7 +273,8 @@
     <div id="dashboardSection" class="section-view">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
             <h3 style="color: var(--primary-dark); margin: 0;">لوحة تحكم عيادة Peter Dental Zone (Google Sheets)</h3>
-            <div>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn-refresh" onclick="renderDashboardTable()">🔄 تحديث الآن</button>
                 <button onclick="switchTab('booking')" style="background: #7f8c8d; color: white; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer;">العودة للحجز 🔙</button>
             </div>
         </div>
@@ -320,6 +322,8 @@
     const ADMIN_EMAIL = "petersamy773@gmail.com";
     const ADMIN_PASS = "P3534Sam6@Lab8b1985";
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzcR56CAfJxU7wDmZmjI06NbsKMFtiRxsX1oQnaRX8ITIBRFvIggOq7KB75PeJmTM10OA/exec";
+
+    let autoRefreshInterval = null;
 
     window.onload = function() {
         const today = new Date().toISOString().split('T')[0];
@@ -370,9 +374,16 @@
         document.querySelectorAll('.section-view').forEach(el => el.classList.remove('active'));
         if (tabName === 'booking') {
             document.getElementById('bookingSection').classList.add('active');
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval); // إيقاف التحديث التلقائي لو خرجنا من الداشبورد
         } else {
             document.getElementById('dashboardSection').classList.add('active');
             renderDashboardTable();
+            
+            // تفعيل التحديث التلقائي كل 10 ثوانٍ أثناء وجود الطبيب في الداشبورد
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+            autoRefreshInterval = setInterval(() => {
+                renderDashboardTable(true); // تمرير true لتجنب تشتيت الطبيب (تحديث هادئ في الخلفية)
+            }, 10000);
         }
     }
 
@@ -557,9 +568,11 @@
         document.getElementById('paymentRef').value = '';
     }
 
-    async function renderDashboardTable() {
+    async function renderDashboardTable(isBackground = false) {
         const tbody = document.getElementById('appointmentsTableBody');
-        tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث من Google Sheet...</td></tr>`;
+        if (!isBackground) {
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث من Google Sheet...</td></tr>`;
+        }
         
         let allBookingsList = await fetchBookingsFromSheet();
 
@@ -630,7 +643,6 @@
         document.getElementById('totalCountBox').innerText = allBookingsList.length;
     }
 
-    // دالة حذف الحجز وتحديث الشيت تلقائياً بالكامل
     async function deleteBookingRow(bookingId) {
         if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً من العيادة وشيت جوجل؟')) return;
         
@@ -643,7 +655,6 @@
             });
             
             alert('تم الحذف بنجاح من الشيت والنظام!');
-            // إعادة تحميل الجدول بعد لحظة قصيرة لتحديث البيانات المعروضة
             setTimeout(() => {
                 renderDashboardTable();
             }, 1000);
