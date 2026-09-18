@@ -121,9 +121,10 @@
             background-color: var(--primary-dark);
         }
 
-        button.action-btn:disabled {
-            background-color: #95a5a6;
-            cursor: not-allowed;
+        button.action-btn:disabled, button:disabled {
+            background-color: #95a5a6 !important;
+            cursor: not-allowed !important;
+            opacity: 0.7;
         }
 
         #summary {
@@ -371,7 +372,7 @@
     let autoRefreshInterval = null;
     let cachedBookings = [];
     let isFetching = false;
-    let isSubmitting = false; // قفل منع تكرار الضغط
+    let isSubmitting = false; // قفل عام لمنع تعدد الأوامر
 
     window.onload = function() {
         const today = new Date().toISOString().split('T')[0];
@@ -438,12 +439,11 @@
             
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
             autoRefreshInterval = setInterval(() => {
-                renderDashboardTable(false); // تحديث صامت بالخلفية بدون إظهار رسالة جاري التحميل
-            }, 15000);
+                renderDashboardTable(false);
+            }, 20000);
         }
     }
 
-    // جلب البيانات مع مانع التداخل (Mutex Lock) لسرعة صاروخية وعدم التعليق
     async function fetchBookingsFromSheet(force = false) {
         if (isFetching && !force) return cachedBookings;
         isFetching = true;
@@ -552,7 +552,7 @@
     }
 
     async function autoBookAppointment() {
-        if (isSubmitting) return; // منع الضغط المتكرر
+        if (isSubmitting) return;
         
         const name = document.getElementById('patientName').value.trim();
         const phone = document.getElementById('patientPhone').value.trim();
@@ -618,7 +618,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            
             cachedBookings.push(newBooking);
         } catch (e) {
             console.error(e);
@@ -670,9 +669,15 @@
         const deposit = price * 0.20;
 
         isSubmitting = true;
+        const walkinBtn = document.getElementById('walkinSubmitBtn');
+        walkinBtn.disabled = true;
+        walkinBtn.innerText = 'جاري التسجيل...';
+
         const slot = await calculateSmartTimeSlot(date, duration);
         if (slot.assignedStart === -1) {
             alert('عذراً، أوقات العيادة لهذا اليوم مكتملة!');
+            walkinBtn.disabled = false;
+            walkinBtn.innerText = 'تسجيل الحجز فوراً';
             isSubmitting = false;
             return;
         }
@@ -707,45 +712,59 @@
             closeWalkinModal();
             document.getElementById('walkinName').value = '';
             document.getElementById('walkinPhone').value = '';
-            renderDashboardTable(true);
+            renderDashboardTable(false);
         } catch (e) {
             console.error(e);
         } finally {
+            walkinBtn.disabled = false;
+            walkinBtn.innerText = 'تسجيل الحجز فوراً';
             isSubmitting = false;
         }
     }
 
-    async function toggleBookingStatus(bookingId, currentStatus, queueNum, name, phone, service, price, date, time, deposit, paymentRef, duration) {
-        const newStatus = (currentStatus.trim() === 'confirmed') ? 'pending' : 'confirmed';
-        
+    // زر تغيير الحالة فوري بدون حذف وإضافة (تحديث ذكي وسريع جداً)
+    async function toggleBookingStatus(bookingId, btnElement) {
+        if (btnElement.disabled) return;
+        btnElement.disabled = true; // قفل الزر مؤقتاً لمنع التكرار
+
         let found = cachedBookings.find(b => String(b.id) === String(bookingId));
-        if(found) found.status = newStatus;
-        renderDashboardTable(true);
+        if (!found) {
+            btnElement.disabled = false;
+            return;
+        }
+
+        const oldStatus = String(found.status).trim();
+        const newStatus = (oldStatus === 'confirmed') ? 'pending' : 'confirmed';
+        
+        // تحديث الواجهة محلياً فوراً
+        found.status = newStatus;
+        renderDashboardTable(false);
 
         const updatedBooking = {
-            id: bookingId,
-            date: date,
-            time: time,
-            name: name,
-            phone: phone,
-            service: service,
-            price: price,
-            deposit: deposit,
-            duration: duration,
-            paymentRef: paymentRef,
+            id: found.id,
+            date: found.date,
+            time: found.time,
+            name: found.name,
+            phone: found.phone,
+            service: found.service,
+            price: found.price,
+            deposit: found.deposit,
+            duration: found.duration,
+            paymentRef: found.paymentRef,
             status: newStatus,
-            queueNum: queueNum
+            queueNum: found.queueNum
         };
 
         try {
-            fetch(WEB_APP_URL, {
+            // إرسال طلب الحذف ثم الإضافة في خلفية السيرفر بدون تأثير على سرعة المتصفح
+            await fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'delete', id: bookingId })
             });
 
-            fetch(WEB_APP_URL, {
+            await fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
@@ -753,21 +772,22 @@
             });
         } catch (e) {
             console.error(e);
+        } finally {
+            btnElement.disabled = false;
         }
     }
 
-    async function renderDashboardTable(showLoading = false) {
+    async function renderDashboardTable(fetchNew = false) {
         const tbody = document.getElementById('appointmentsTableBody');
-        if (showLoading && cachedBookings.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحميل...</td></tr>`;
+        if (fetchNew || cachedBookings.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث...</td></tr>`;
+            await fetchBookingsFromSheet(true);
         }
-        
-        let allBookingsList = await fetchBookingsFromSheet(showLoading);
 
         let totalDeposit = 0;
         let totalRevenue = 0;
 
-        if (!allBookingsList || allBookingsList.length === 0) {
+        if (!cachedBookings || cachedBookings.length === 0) {
             tbody.innerHTML = `<tr><td colspan="9" style="color: #777; padding: 15px;">لا توجد حجوزات مسجلة حالياً.</td></tr>`;
             document.getElementById('totalDepositBox').innerText = '0 جنيه';
             document.getElementById('totalRevenueBox').innerText = '0 جنيه';
@@ -775,7 +795,7 @@
             return;
         }
 
-        let sortedList = [...allBookingsList].sort((a, b) => {
+        let sortedList = [...cachedBookings].sort((a, b) => {
             let dateA = String(a.date).split('T')[0];
             let dateB = String(b.date).split('T')[0];
             if (dateA !== dateB) return dateA.localeCompare(dateB);
@@ -816,7 +836,7 @@
                     <td><b>${b.time}</b></td>
                     <td><b>${b.deposit} جـ</b><br><small>إيصال: ${b.paymentRef}</small></td>
                     <td>
-                        <button class="${statusButtonClass}" onclick="toggleBookingStatus('${b.id}', '${b.status}', ${queueCounter}, '${b.name}', '${b.phone}', '${b.service}', ${b.price}, '${cleanDate}', '${b.time}', ${b.deposit}, '${b.paymentRef}', ${b.duration || 30})">
+                        <button class="${statusButtonClass}" onclick="toggleBookingStatus('${b.id}', this)">
                             ${statusText}
                         </button>
                     </td>
@@ -834,7 +854,7 @@
         tbody.innerHTML = html;
         document.getElementById('totalDepositBox').innerText = totalDeposit + ' جنيه';
         document.getElementById('totalRevenueBox').innerText = totalRevenue + ' جنيه';
-        document.getElementById('totalCountBox').innerText = allBookingsList.length;
+        document.getElementById('totalCountBox').innerText = cachedBookings.length;
     }
 
     async function deleteBookingRow(bookingId) {
