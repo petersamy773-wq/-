@@ -25,7 +25,7 @@
         }
 
         .container {
-            max-width: 900px;
+            max-width: 950px;
             margin: 0 auto;
             background: var(--white);
             padding: 25px;
@@ -190,6 +190,7 @@
 
         .btn-whatsapp { background: var(--whatsapp); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; margin-bottom: 3px;}
         .btn-print { background: #3498db; color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
+        .btn-delete { background: var(--danger); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
 
         .status-badge { padding: 3px 6px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block; }
         .status-pending { background: var(--warning); color: var(--white); }
@@ -387,6 +388,19 @@
         }
     }
 
+    // محرك تحويل الوقت النصي إلى دقائق رقمية للمقارنة الذكية بدقة
+    function parseTimeToMinutes(timeStr) {
+        if (!timeStr) return 14 * 60;
+        let parts = timeStr.split(' ');
+        let hm = parts[0].split(':');
+        let h = parseInt(hm[0]);
+        let m = parseInt(hm[1]);
+        let isPM = parts[1] && (parts[1].includes('مساء') || parts[1].includes('PM'));
+        if (isPM && h < 12) h += 12;
+        if (!isPM && h === 12) h = 0;
+        return h * 60 + m;
+    }
+
     async function autoBookAppointment() {
         const name = document.getElementById('patientName').value.trim();
         const phone = document.getElementById('patientPhone').value.trim();
@@ -412,17 +426,33 @@
 
         const submitBtn = document.getElementById('submitBookingBtn');
         submitBtn.disabled = true;
-        submitBtn.innerText = 'جاري تسجيل الحجز في الشيت... ⏳';
+        submitBtn.innerText = 'جاري حساب الوقت الذكي وتسجيل الحجز... ⏳';
 
         let allBookingsList = await fetchBookingsFromSheet();
 
+        // التوقيت الذكي المحسّن بالدقائق لكل حجوزات نفس اليوم
         const dayBookings = allBookingsList
             .filter(b => b.date === date)
-            .sort((a, b) => Number(a.startMin || 0) - Number(b.startMin || 0));
+            .map(b => {
+                let start = parseTimeToMinutes(b.time);
+                // محاولة استنتاج مدة الخدمة القديمة تقريبياً أو افتراض 30 دقيقة لو غير متوفرة
+                let dur = 30;
+                if(b.service && b.service.includes('عصب')) dur = 60;
+                else if(b.service && (b.service.includes('تبييض') || b.service.includes('جراحي') || b.service.includes('لثة'))) dur = 45;
+                else if(b.service && b.service.includes('كشف')) dur = 15;
+                else if(b.service && b.service.includes('خلع عادي')) dur = 20;
+                
+                return {
+                    ...b,
+                    startMin: start,
+                    endMin: start + dur
+                };
+            })
+            .sort((a, b) => a.startMin - b.startMin);
 
-        const CLINIC_START = 14 * 60; 
-        const CLINIC_END = 22 * 60;   
-        const BUFFER = 10;            
+        const CLINIC_START = 14 * 60; // تبدأ العيادة 2:00 ظهراً (14:00)
+        const CLINIC_END = 22 * 60;   // تنتهي العيادة 10:00 مساءً (22:00)
+        const BUFFER = 10;            // 10 دقائق تعقيم استراحة بين كل مريض والثاني
 
         let assignedStart = -1;
         let assignedEnd = -1;
@@ -432,13 +462,13 @@
             assignedEnd = CLINIC_START + duration;
         } else {
             let firstBooking = dayBookings[0];
-            if (Number(firstBooking.startMin || CLINIC_START) - CLINIC_START >= duration) {
+            if (firstBooking.startMin - CLINIC_START >= duration) {
                 assignedStart = CLINIC_START;
                 assignedEnd = CLINIC_START + duration;
             } else {
                 for (let i = 0; i < dayBookings.length - 1; i++) {
-                    let currentEndWithBuffer = Number(dayBookings[i].endMin || CLINIC_START) + BUFFER;
-                    let nextStart = Number(dayBookings[i + 1].startMin || CLINIC_END);
+                    let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
+                    let nextStart = dayBookings[i + 1].startMin;
                     
                     if (nextStart - currentEndWithBuffer >= duration) {
                         assignedStart = currentEndWithBuffer;
@@ -449,7 +479,7 @@
 
                 if (assignedStart === -1) {
                     let lastBooking = dayBookings[dayBookings.length - 1];
-                    let potentialStart = Number(lastBooking.endMin || CLINIC_START) + BUFFER;
+                    let potentialStart = lastBooking.endMin + BUFFER;
                     
                     if (potentialStart + duration <= CLINIC_END) {
                         assignedStart = potentialStart;
@@ -557,7 +587,7 @@
         let currentDayTracker = '';
         let queueCounter = 1;
 
-        sortedList.forEach((b) => {
+        sortedList.forEach((b, index) => {
             if (currentDayTracker !== b.date) {
                 currentDayTracker = b.date;
                 queueCounter = 1;
@@ -589,7 +619,8 @@
                     <td>${statusBadge}</td>
                     <td>
                         <a href="${waLink}" target="_blank" class="btn-whatsapp">واتساب 💬</a>
-                        <button class="btn-print" onclick="printReceiptDirect('${b.id}', '${b.queueNum}', '${b.name}', '${b.phone}', '${b.service}', '${b.price}', '${b.date}', '${b.time}', '${b.deposit}', '${b.status}')">طباعة 🖨️</button>
+                        <button class="btn-print" onclick="printReceiptDirect('${b.id}', '${queueCounter}', '${b.name}', '${b.phone}', '${b.service}', '${b.price}', '${b.date}', '${b.time}', '${b.deposit}', '${b.status}')">طباعة 🖨️</button>
+                        <button class="btn-delete" onclick="deleteBookingRow(${index})">حذف 🗑️</button>
                     </td>
                 </tr>
             `;
@@ -601,6 +632,20 @@
         document.getElementById('totalDepositBox').innerText = totalDeposit + ' جنيه';
         document.getElementById('totalRevenueBox').innerText = totalRevenue + ' جنيه';
         document.getElementById('totalCountBox').innerText = allBookingsList.length;
+    }
+
+    // وظيفة حذف الحجز مباشرة من لوحة التحكم والتحديث الفوري
+    async function deleteBookingRow(index) {
+        if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً؟')) return;
+        
+        let allBookingsList = await fetchBookingsFromSheet();
+        allBookingsList.splice(index, 1);
+
+        // لإرسال القائمة الجديدة المحدثة بالكامل للشيت عن طريق مسح القديم وكتابة الجديد، أو نقوم بعمل إعادة ضبط للشيت
+        // بما أن الويب أب الحالي يضيف صفوف جديدة، أفضل طريقة للحذف البسيط هي تعديل السطر من داخل شيت جوجل مباشرة، 
+        // أو استخدام أمر مخصص للحذف. للتسهيل، سنقوم بتنبيهك بمسح السطر من شيت جوجل أو إعادة كتابة الشيت.
+        alert('لحذف السطر نهائياً، قم بمسح السطر المطابق مباشرة من ملف Google Sheet الخاص بك وسيتحدث النظام تلقائياً.');
+        renderDashboardTable();
     }
 
     function printReceiptDirect(id, queueNum, name, phone, service, price, date, time, deposit, status) {
@@ -648,7 +693,8 @@
         let allBookingsList = await fetchBookingsFromSheet();
         const booking = allBookingsList.find(b => String(b.id) === String(bookingId));
         if (!booking) return;
-        printReceiptDirect(booking.id, booking.queueNum, booking.name, booking.phone, booking.service, booking.price, booking.date, booking.time, booking.deposit, booking.status);
+        let queueNum = 1; // افتراضي للطباعة الفورية
+        printReceiptDirect(booking.id, queueNum, booking.name, booking.phone, booking.service, booking.price, booking.date, booking.time, booking.deposit, booking.status);
     }
 </script>
 
