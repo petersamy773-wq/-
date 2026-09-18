@@ -388,9 +388,9 @@
 
     async function fetchBookingsFromSheet() {
         try {
-            const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime()); // منع الـ Cache تماماً
+            const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
             const data = await response.json();
-            return data;
+            return Array.isArray(data) ? data : [];
         } catch (e) {
             console.error("Error fetching from sheet:", e);
             return [];
@@ -399,24 +399,31 @@
 
     function parseTimeToMinutes(timeStr) {
         if (!timeStr) return 14 * 60;
-        let parts = timeStr.split(' ');
+        let clean = String(timeStr).trim();
+        let parts = clean.split(' ');
+        if (parts.length < 2) return 14 * 60;
         let hm = parts[0].split(':');
+        if (hm.length < 2) return 14 * 60;
         let h = parseInt(hm[0]);
         let m = parseInt(hm[1]);
-        let isPM = parts[1] && (parts[1].includes('مساء') || parts[1].includes('PM'));
+        let period = parts[1];
+        
+        let isPM = period.includes('مساء') || period.toUpperCase().includes('PM');
         if (isPM && h < 12) h += 12;
-        if (!isPM && h === 12) h = 0;
+        if (!isPM && (period.includes('ظهراً') || period.includes('صباحاً') || period.toUpperCase().includes('AM')) && h === 12) {
+            if (period.includes('ظهراً')) h = 12;
+            else h = 0;
+        }
         return h * 60 + m;
     }
 
-    function getServiceDuration(serviceName) {
-        if (!serviceName) return 30;
-        if (serviceName.includes('عصب')) return 60;
-        if (serviceName.includes('تبييض') || serviceName.includes('جراحي') || serviceName.includes('لثة')) return 45;
-        if (serviceName.includes('كشف')) return 15;
-        if (serviceName.includes('خلع عادي')) return 20;
-        if (serviceName.includes('تركيبات') || serviceName.includes('تجميلي') || serviceName.includes('تنظيف جير')) return 30;
-        return 30;
+    function formatTimeMinutes(totalMins) {
+        const h = Math.floor(totalMins / 60);
+        const m = totalMins % 60;
+        const period = h >= 12 ? 'مساءً' : 'ظهراً';
+        const formattedH = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+        const formattedM = m < 10 ? '0' + m : m;
+        return `${formattedH}:${formattedM} ${period}`;
     }
 
     async function autoBookAppointment() {
@@ -448,12 +455,12 @@
 
         let allBookingsList = await fetchBookingsFromSheet();
 
-        // تصفية وترتيب حجوزات اليوم المحدد تصاعدياً بالدقائق بدقة شديدة
+        // تصفية حجوزات اليوم المحدد بدقة وترتيبها تنازلياً/تصاعدياً بالدقائق
         const dayBookings = allBookingsList
             .filter(b => String(b.date).trim() === String(date).trim())
             .map(b => {
                 let start = parseTimeToMinutes(b.time);
-                let dur = getServiceDuration(b.service);
+                let dur = parseInt(b.duration) || 30; // لو المدة متوفرة أو استنتاجية
                 return {
                     startMin: start,
                     endMin: start + dur
@@ -461,24 +468,22 @@
             })
             .sort((a, b) => a.startMin - b.startMin);
 
-        const CLINIC_START = 14 * 60; // 2:00 ظهراً بالدقائق (840 دقيقة)
-        const CLINIC_END = 22 * 60;   // 10:00 مساءً بالدقائق (1320 دقيقة)
-        const BUFFER = 10;            // 10 دقائق راحة إجبارية بين المرضى
+        const CLINIC_START = 14 * 60; // 2:00 ظهراً (840 دقيقة)
+        const CLINIC_END = 22 * 60;   // 10:00 مساءً (1320 دقيقة)
+        const BUFFER = 10;            // 10 دقائق استراحة بين المواعيد
 
         let assignedStart = -1;
         let assignedEnd = -1;
 
-        // خوارزمية التوقيت الذكي الفولاذية للفجوات والمواعيد
         if (dayBookings.length === 0) {
             assignedStart = CLINIC_START;
             assignedEnd = CLINIC_START + duration;
         } else {
-            // محاولة الحجز قبل أول مريض في اليوم لو فيه مساحة كافية
+            // محاولة الحجز في البداية قبل أول مريض
             if (dayBookings[0].startMin - CLINIC_START >= duration) {
                 assignedStart = CLINIC_START;
                 assignedEnd = CLINIC_START + duration;
             } else {
-                // البحث في الفجوات بين المرضى المسجلين
                 let foundGap = false;
                 for (let i = 0; i < dayBookings.length; i++) {
                     let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
@@ -494,7 +499,7 @@
                     }
                 }
 
-                // لو ملقاش فجوة في النص، يحط المريض بعد آخر مريض خالص في اليوم
+                // لو ملقاش فجوة، يحط الحجز بعد آخر مريض
                 if (!foundGap) {
                     let lastBooking = dayBookings[dayBookings.length - 1];
                     let potentialStart = Math.max(CLINIC_START, lastBooking.endMin + BUFFER);
@@ -507,20 +512,11 @@
         }
 
         if (assignedStart === -1 || assignedEnd > CLINIC_END) {
-            alert('عذراً، عيادة هذا اليوم مكتملة تماماً أو لا توجد فترة متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
+            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً أو لا توجد فترة متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             return;
         }
-
-        const formatTimeMinutes = (totalMins) => {
-            const h = Math.floor(totalMins / 60);
-            const m = totalMins % 60;
-            const period = h >= 12 ? 'مساءً' : 'ظهراً';
-            const formattedH = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-            const formattedM = m < 10 ? '0' + m : m;
-            return `${formattedH}:${formattedM} ${period}`;
-        };
 
         const assignedTimeStr = formatTimeMinutes(assignedStart);
         const bookingCode = 'PDZ-' + Math.floor(1000 + Math.random() * 9000);
@@ -536,6 +532,7 @@
             service: service,
             price: price,
             deposit: deposit,
+            duration: duration,
             paymentRef: paymentRef ? paymentRef : 'لم يُسجل بعد',
             status: isConfirmed ? 'confirmed' : 'pending',
             queueNum: patientQueueNumber
