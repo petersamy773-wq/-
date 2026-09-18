@@ -465,15 +465,15 @@
 
         let allBookingsList = await fetchBookingsFromSheet();
 
-        // تصفية حجوزات اليوم المحدد بدقة تامة ومقارنة التواريخ كنصوص نظيفة
+        // تصفية حجوزات اليوم بدقة تامة ومقارنة التاريخ كنص YYYY-MM-DD
         const dayBookings = allBookingsList
             .filter(b => {
-                let sheetDate = String(b.date).split('T')[0].trim();
-                return sheetDate === String(date).trim();
+                let bDate = String(b.date).split('T')[0].trim();
+                return bDate === String(date).trim();
             })
             .map(b => {
                 let start = parseTimeToMinutes(b.time);
-                let dur = parseInt(b.duration) || getServiceDurationFromName(b.service);
+                let dur = Number(b.duration) || getServiceDurationFromName(b.service);
                 return {
                     startMin: start,
                     endMin: start + dur
@@ -492,7 +492,7 @@
             assignedStart = CLINIC_START;
             assignedEnd = CLINIC_START + duration;
         } else {
-            // محاولة الحجز في البداية قبل أول مريض في اليوم
+            // التحقق من إمكانية الحجز في البداية قبل أول مريض
             if (dayBookings[0].startMin - CLINIC_START >= duration) {
                 assignedStart = CLINIC_START;
                 assignedEnd = CLINIC_START + duration;
@@ -512,7 +512,7 @@
                     }
                 }
 
-                // لو ملقاش فجوة، يحط الحجز بعد آخر مريض خالص في الجدول
+                // لو ملقاش فجوة في النص، يحط الحجز بعد آخر مريض خالص مع إضافة الـ 10 دقائق
                 if (!foundGap) {
                     let lastBooking = dayBookings[dayBookings.length - 1];
                     let potentialStart = Math.max(CLINIC_START, lastBooking.endMin + BUFFER);
@@ -578,7 +578,7 @@
             <hr>
             <p><b>العربون المطلوب (20%):</b> <span style="color: #d35400; font-weight: bold; font-size: 18px;">${deposit} جنيه</span></p>
             <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 10px; border-radius: 5px; margin-top: 10px; color: #856404; font-size: 14px;">
-                ⚠️ <b>تنبيه هام جداً:</b> برجاء أخذ <b>سكرين شوت (لقطة شاشة)</b> لهذا الإيصال، والحضور إلى العيادة قبل الميعاد بـ <b>10 دقائق</b> كاملة مع إظهار السكرين شوت عند الاستقبال.
+                ⚠️ <b>تنبيه هام جداً:</b> برجاء أخذ <b>سكرين شوت (لقطة شاشة)</b> لهذا الإيصال، والحضور قبل الميعاد بـ <b>10 دقائق</b> كاملة مع إظهار السكرين شوت عند الاستقبال.
             </div>
             <button class="action-btn" style="background:#3498db; margin-top:10px;" onclick="printReceiptData('${bookingCode}')">طباعة إيصال الحجز 🖨️</button>
         `;
