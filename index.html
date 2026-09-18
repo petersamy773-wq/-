@@ -374,15 +374,14 @@
         document.querySelectorAll('.section-view').forEach(el => el.classList.remove('active'));
         if (tabName === 'booking') {
             document.getElementById('bookingSection').classList.add('active');
-            if (autoRefreshInterval) clearInterval(autoRefreshInterval); // إيقاف التحديث التلقائي لو خرجنا من الداشبورد
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
         } else {
             document.getElementById('dashboardSection').classList.add('active');
             renderDashboardTable();
             
-            // تفعيل التحديث التلقائي كل 10 ثوانٍ أثناء وجود الطبيب في الداشبورد
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
             autoRefreshInterval = setInterval(() => {
-                renderDashboardTable(true); // تمرير true لتجنب تشتيت الطبيب (تحديث هادئ في الخلفية)
+                renderDashboardTable(true);
             }, 10000);
         }
     }
@@ -410,6 +409,17 @@
         return h * 60 + m;
     }
 
+    // دالة استنتاج مدة الجلسة بناءً على نوع الخدمة المختارة
+    function getServiceDuration(serviceName) {
+        if (!serviceName) return 30;
+        if (serviceName.includes('عصب')) return 60;
+        if (serviceName.includes('تبييض') || serviceName.includes('جراحي') || serviceName.includes('لثة')) return 45;
+        if (serviceName.includes('كشف')) return 15;
+        if (serviceName.includes('خلع عادي')) return 20;
+        if (serviceName.includes('تركيبات') || serviceName.includes('تجميلي') || serviceName.includes('تنظيف جير')) return 30;
+        return 30;
+    }
+
     async function autoBookAppointment() {
         const name = document.getElementById('patientName').value.trim();
         const phone = document.getElementById('patientPhone').value.trim();
@@ -435,20 +445,16 @@
 
         const submitBtn = document.getElementById('submitBookingBtn');
         submitBtn.disabled = true;
-        submitBtn.innerText = 'جاري حساب الوقت الذكي وتسجيل الحجز... ⏳';
+        submitBtn.innerText = 'جاري البحث عن أسبقية وفترة متاحة في الجدول... ⏳';
 
         let allBookingsList = await fetchBookingsFromSheet();
 
+        // تصفية حجوزات اليوم وترتيبها تصاعدياً حسب وقت البدء الدقيق
         const dayBookings = allBookingsList
             .filter(b => b.date === date)
             .map(b => {
                 let start = parseTimeToMinutes(b.time);
-                let dur = 30;
-                if(b.service && b.service.includes('عصب')) dur = 60;
-                else if(b.service && (b.service.includes('تبييض') || b.service.includes('جراحي') || b.service.includes('لثة'))) dur = 45;
-                else if(b.service && b.service.includes('كشف')) dur = 15;
-                else if(b.service && b.service.includes('خلع عادي')) dur = 20;
-                
+                let dur = getServiceDuration(b.service);
                 return {
                     ...b,
                     startMin: start,
@@ -457,26 +463,30 @@
             })
             .sort((a, b) => a.startMin - b.startMin);
 
-        const CLINIC_START = 14 * 60; 
-        const CLINIC_END = 22 * 60;   
-        const BUFFER = 10;            
+        const CLINIC_START = 14 * 60; // الساعة 2:00 ظهراً بالدقائق
+        const CLINIC_END = 22 * 60;   // الساعة 10:00 مساءً بالدقائق
+        const BUFFER = 10;            // 10 دقائق تعقيم وراحة بين المرضى
 
         let assignedStart = -1;
         let assignedEnd = -1;
 
         if (dayBookings.length === 0) {
+            // لو اليوم فاضي خالص، ابدأ من أول ميعاد في العيادة (الساعة 2 ظهراً)
             assignedStart = CLINIC_START;
             assignedEnd = CLINIC_START + duration;
         } else {
+            // 1. هل الفتره أو المسافة قبل أول حجز تكفي؟ (ملء الفراغات المبكرة)
             let firstBooking = dayBookings[0];
             if (firstBooking.startMin - CLINIC_START >= duration) {
                 assignedStart = CLINIC_START;
                 assignedEnd = CLINIC_START + duration;
             } else {
+                // 2. فحص الفراغات الفاصلة بين الحجوزات (فترة فضت بسبب إلغاء سابق أو مسح مريض)
                 for (let i = 0; i < dayBookings.length - 1; i++) {
                     let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
                     let nextStart = dayBookings[i + 1].startMin;
                     
+                    // لو الفراغ بين المريض الحالي واللي بعده يكفي مدة الخدمة الجديدة
                     if (nextStart - currentEndWithBuffer >= duration) {
                         assignedStart = currentEndWithBuffer;
                         assignedEnd = assignedStart + duration;
@@ -484,6 +494,7 @@
                     }
                 }
 
+                // 3. لو مفيش فراغ بين الحجوزات يكفي، حط المريض في النهاية خالص بعد آخر مريض
                 if (assignedStart === -1) {
                     let lastBooking = dayBookings[dayBookings.length - 1];
                     let potentialStart = lastBooking.endMin + BUFFER;
@@ -497,7 +508,7 @@
         }
 
         if (assignedStart === -1 || assignedEnd > CLINIC_END) {
-            alert('عذراً، عيادة هذا اليوم مكتملة بالكامل أو لا توجد فترة زمنية متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
+            alert('عذراً، عيادة هذا اليوم مكتملة بالكامل ولا توجد فترة زمنية متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             return;
@@ -554,7 +565,7 @@
             <p><b>المريض:</b> ${name} (${phone})</p>
             <p><b>الخدمة:</b> ${service} (${price} جنيه)</p>
             <p><b>تاريخ الحجز:</b> ${date}</p>
-            <p><b>ميعاد الجلسة:</b> <span style="color: var(--danger); font-weight: bold; font-size: 17px;">${assignedTimeStr}</span></p>
+            <p><b>ميعاد الجلسة الذكي:</b> <span style="color: var(--danger); font-weight: bold; font-size: 17px;">${assignedTimeStr}</span></p>
             <hr>
             <p><b>العربون المطلوب (20%):</b> <span style="color: #d35400; font-weight: bold; font-size: 18px;">${deposit} جنيه</span></p>
             <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 10px; border-radius: 5px; margin-top: 10px; color: #856404; font-size: 14px;">
@@ -589,7 +600,7 @@
 
         let sortedList = [...allBookingsList].sort((a, b) => {
             if (a.date !== b.date) return String(a.date).localeCompare(String(b.date));
-            return 0;
+            return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
         });
 
         let html = '';
