@@ -388,7 +388,7 @@
 
     async function fetchBookingsFromSheet() {
         try {
-            const response = await fetch(WEB_APP_URL);
+            const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime()); // منع الـ Cache تماماً
             const data = await response.json();
             return data;
         } catch (e) {
@@ -409,7 +409,6 @@
         return h * 60 + m;
     }
 
-    // دالة استنتاج مدة الجلسة بناءً على نوع الخدمة المختارة
     function getServiceDuration(serviceName) {
         if (!serviceName) return 30;
         if (serviceName.includes('عصب')) return 60;
@@ -445,70 +444,63 @@
 
         const submitBtn = document.getElementById('submitBookingBtn');
         submitBtn.disabled = true;
-        submitBtn.innerText = 'جاري البحث عن أسبقية وفترة متاحة في الجدول... ⏳';
+        submitBtn.innerText = 'جاري حساب الجدول الزمني الذكي... ⏳';
 
         let allBookingsList = await fetchBookingsFromSheet();
 
-        // تصفية حجوزات اليوم وترتيبها تصاعدياً حسب وقت البدء الدقيق
+        // تصفية حجوزات اليوم المحدد فقط
         const dayBookings = allBookingsList
             .filter(b => b.date === date)
             .map(b => {
                 let start = parseTimeToMinutes(b.time);
                 let dur = getServiceDuration(b.service);
                 return {
-                    ...b,
                     startMin: start,
                     endMin: start + dur
                 };
             })
             .sort((a, b) => a.startMin - b.startMin);
 
-        const CLINIC_START = 14 * 60; // الساعة 2:00 ظهراً بالدقائق
-        const CLINIC_END = 22 * 60;   // الساعة 10:00 مساءً بالدقائق
-        const BUFFER = 10;            // 10 دقائق تعقيم وراحة بين المرضى
+        const CLINIC_START = 14 * 60; // 2:00 ظهراً
+        const CLINIC_END = 22 * 60;   // 10:00 مساءً
+        const BUFFER = 10;            // 10 دقائق راحة بين المرضى
 
         let assignedStart = -1;
         let assignedEnd = -1;
 
+        // خوارزمية البحث المتقدمة عن الفجوات (Gaps) أو المواعيد المتاحة بدقة
+        let pointer = CLINIC_START;
+
         if (dayBookings.length === 0) {
-            // لو اليوم فاضي خالص، ابدأ من أول ميعاد في العيادة (الساعة 2 ظهراً)
             assignedStart = CLINIC_START;
             assignedEnd = CLINIC_START + duration;
         } else {
-            // 1. هل الفتره أو المسافة قبل أول حجز تكفي؟ (ملء الفراغات المبكرة)
-            let firstBooking = dayBookings[0];
-            if (firstBooking.startMin - CLINIC_START >= duration) {
-                assignedStart = CLINIC_START;
-                assignedEnd = CLINIC_START + duration;
+            // فحص هل فيه مكان فاضي في الأول خالص قبل أول مريض؟
+            if (dayBookings[0].startMin - pointer >= duration) {
+                assignedStart = pointer;
+                assignedEnd = pointer + duration;
             } else {
-                // 2. فحص الفراغات الفاصلة بين الحجوزات (فترة فضت بسبب إلغاء سابق أو مسح مريض)
-                for (let i = 0; i < dayBookings.length - 1; i++) {
-                    let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
-                    let nextStart = dayBookings[i + 1].startMin;
+                // الفحص داخل الفجوات بين المرضى
+                for (let i = 0; i < dayBookings.length; i++) {
+                    let currentBookingEndWithBuffer = dayBookings[i].endMin + BUFFER;
                     
-                    // لو الفراغ بين المريض الحالي واللي بعده يكفي مدة الخدمة الجديدة
-                    if (nextStart - currentEndWithBuffer >= duration) {
-                        assignedStart = currentEndWithBuffer;
-                        assignedEnd = assignedStart + duration;
-                        break;
-                    }
-                }
+                    let nextBookingStart = (i < dayBookings.length - 1) ? dayBookings[i + 1].startMin : CLINIC_END;
 
-                // 3. لو مفيش فراغ بين الحجوزات يكفي، حط المريض في النهاية خالص بعد آخر مريض
-                if (assignedStart === -1) {
-                    let lastBooking = dayBookings[dayBookings.length - 1];
-                    let potentialStart = lastBooking.endMin + BUFFER;
-                    
-                    if (potentialStart + duration <= CLINIC_END) {
-                        assignedStart = potentialStart;
-                        assignedEnd = assignedStart + duration;
+                    if (currentBookingEndWithBuffer > pointer) {
+                        pointer = currentBookingEndWithBuffer;
+                    }
+
+                    if (nextBookingStart - pointer >= duration) {
+                        assignedStart = pointer;
+                        assignedEnd = pointer + duration;
+                        break;
                     }
                 }
             }
         }
 
         if (assignedStart === -1 || assignedEnd > CLINIC_END) {
-            alert('عذراً، عيادة هذا اليوم مكتملة بالكامل ولا توجد فترة زمنية متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
+            alert('عذراً، عيادة هذا اليوم مكتملة تماماً أو لا توجد فترة متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             return;
@@ -526,7 +518,7 @@
         const assignedTimeStr = formatTimeMinutes(assignedStart);
         const bookingCode = 'PDZ-' + Math.floor(1000 + Math.random() * 9000);
         const isConfirmed = paymentRef.length > 0;
-        const patientQueueNumber = dayBookings.length + 1;
+        const patientQueueNumber = allBookingsList.filter(b => b.date === date).length + 1;
 
         const newBooking = {
             id: bookingCode,
