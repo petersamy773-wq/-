@@ -370,9 +370,7 @@
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzcR56CAfJxU7wDmZmjI06NbsKMFtiRxsX1oQnaRX8ITIBRFvIggOq7KB75PeJmTM10OA/exec";
 
     let autoRefreshInterval = null;
-    let cachedBookings = [];
-    let isFetching = false;
-    let isSubmitting = false; // قفل عام لمنع تعدد الأوامر
+    let isSubmitting = false;
 
     window.onload = function() {
         const today = new Date().toISOString().split('T')[0];
@@ -435,28 +433,25 @@
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
         } else {
             document.getElementById('dashboardSection').classList.add('active');
-            renderDashboardTable(true);
+            renderDashboardTable();
             
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
             autoRefreshInterval = setInterval(() => {
                 renderDashboardTable(false);
-            }, 20000);
+            }, 15000);
         }
     }
 
-    async function fetchBookingsFromSheet(force = false) {
-        if (isFetching && !force) return cachedBookings;
-        isFetching = true;
+    // دالة سحب بيانات مباشرة ولحظية بدون كاش قديم لضمان مزامنة الأجهزة بنسبة 100%
+    async function fetchFreshBookingsFromSheet() {
         try {
             const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
             const data = await response.json();
-            cachedBookings = Array.isArray(data) ? data : [];
+            return Array.isArray(data) ? data : [];
         } catch (e) {
             console.error("Error fetching:", e);
-        } finally {
-            isFetching = false;
+            return [];
         }
-        return cachedBookings;
     }
 
     function parseTimeToMinutes(timeStr) {
@@ -498,8 +493,9 @@
         return 30;
     }
 
+    // حساب الوقت الذكي بسحب أحدث بيانات من السيرفر فوراً لمنع تعارض الأجهزة
     async function calculateSmartTimeSlot(date, duration) {
-        let allBookingsList = await fetchBookingsFromSheet(true);
+        let allBookingsList = await fetchFreshBookingsFromSheet();
         const dayBookings = allBookingsList
             .filter(b => String(b.date).split('T')[0].trim() === String(date).trim())
             .map(b => {
@@ -579,12 +575,12 @@
         isSubmitting = true;
         const submitBtn = document.getElementById('submitBookingBtn');
         submitBtn.disabled = true;
-        submitBtn.innerText = 'جاري الحجز الفوري... ⏳';
+        submitBtn.innerText = 'جاري حساب الجدول وتأكيد الميعاد... ⏳';
 
         const slot = await calculateSmartTimeSlot(date, duration);
 
         if (slot.assignedStart === -1 || slot.assignedEnd > 1320) {
-            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً، برجاء اختيار يوم آخر.');
+            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً أو لا توجد فترة متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             isSubmitting = false;
@@ -612,13 +608,13 @@
         };
 
         try {
-            fetch(WEB_APP_URL, {
+            await fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            cachedBookings.push(newBooking);
+            await new Promise(r => setTimeout(r, 1200)); // انتظار استقرار الشيت
         } catch (e) {
             console.error(e);
         }
@@ -701,18 +697,18 @@
         };
 
         try {
-            fetch(WEB_APP_URL, {
+            await fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            cachedBookings.push(newBooking);
+            await new Promise(r => setTimeout(r, 1200));
 
             closeWalkinModal();
             document.getElementById('walkinName').value = '';
             document.getElementById('walkinPhone').value = '';
-            renderDashboardTable(false);
+            renderDashboardTable();
         } catch (e) {
             console.error(e);
         } finally {
@@ -722,41 +718,28 @@
         }
     }
 
-    // زر تغيير الحالة فوري بدون حذف وإضافة (تحديث ذكي وسريع جداً)
-    async function toggleBookingStatus(bookingId, btnElement) {
+    async function toggleBookingStatus(bookingId, currentStatus, queueNum, name, phone, service, price, date, time, deposit, paymentRef, duration, btnElement) {
         if (btnElement.disabled) return;
-        btnElement.disabled = true; // قفل الزر مؤقتاً لمنع التكرار
+        btnElement.disabled = true;
 
-        let found = cachedBookings.find(b => String(b.id) === String(bookingId));
-        if (!found) {
-            btnElement.disabled = false;
-            return;
-        }
-
-        const oldStatus = String(found.status).trim();
-        const newStatus = (oldStatus === 'confirmed') ? 'pending' : 'confirmed';
-        
-        // تحديث الواجهة محلياً فوراً
-        found.status = newStatus;
-        renderDashboardTable(false);
+        const newStatus = (currentStatus.trim() === 'confirmed') ? 'pending' : 'confirmed';
 
         const updatedBooking = {
-            id: found.id,
-            date: found.date,
-            time: found.time,
-            name: found.name,
-            phone: found.phone,
-            service: found.service,
-            price: found.price,
-            deposit: found.deposit,
-            duration: found.duration,
-            paymentRef: found.paymentRef,
+            id: bookingId,
+            date: date,
+            time: time,
+            name: name,
+            phone: phone,
+            service: service,
+            price: price,
+            deposit: deposit,
+            duration: duration,
+            paymentRef: paymentRef,
             status: newStatus,
-            queueNum: found.queueNum
+            queueNum: queueNum
         };
 
         try {
-            // إرسال طلب الحذف ثم الإضافة في خلفية السيرفر بدون تأثير على سرعة المتصفح
             await fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
@@ -770,24 +753,27 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatedBooking)
             });
+
+            await new Promise(r => setTimeout(r, 1000));
+            renderDashboardTable();
         } catch (e) {
             console.error(e);
-        } finally {
             btnElement.disabled = false;
         }
     }
 
-    async function renderDashboardTable(fetchNew = false) {
+    async function renderDashboardTable(showLoading = true) {
         const tbody = document.getElementById('appointmentsTableBody');
-        if (fetchNew || cachedBookings.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث...</td></tr>`;
-            await fetchBookingsFromSheet(true);
+        if (showLoading) {
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث المباشر من الشيت...</td></tr>`;
         }
+
+        let allBookingsList = await fetchFreshBookingsFromSheet();
 
         let totalDeposit = 0;
         let totalRevenue = 0;
 
-        if (!cachedBookings || cachedBookings.length === 0) {
+        if (!allBookingsList || allBookingsList.length === 0) {
             tbody.innerHTML = `<tr><td colspan="9" style="color: #777; padding: 15px;">لا توجد حجوزات مسجلة حالياً.</td></tr>`;
             document.getElementById('totalDepositBox').innerText = '0 جنيه';
             document.getElementById('totalRevenueBox').innerText = '0 جنيه';
@@ -795,7 +781,7 @@
             return;
         }
 
-        let sortedList = [...cachedBookings].sort((a, b) => {
+        let sortedList = [...allBookingsList].sort((a, b) => {
             let dateA = String(a.date).split('T')[0];
             let dateB = String(b.date).split('T')[0];
             if (dateA !== dateB) return dateA.localeCompare(dateB);
@@ -836,7 +822,7 @@
                     <td><b>${b.time}</b></td>
                     <td><b>${b.deposit} جـ</b><br><small>إيصال: ${b.paymentRef}</small></td>
                     <td>
-                        <button class="${statusButtonClass}" onclick="toggleBookingStatus('${b.id}', this)">
+                        <button class="${statusButtonClass}" onclick="toggleBookingStatus('${b.id}', '${b.status}', ${queueCounter}, '${b.name}', '${b.phone}', '${b.service}', ${b.price}, '${cleanDate}', '${b.time}', ${b.deposit}, '${b.paymentRef}', ${b.duration || 30}, this)">
                             ${statusText}
                         </button>
                     </td>
@@ -854,22 +840,21 @@
         tbody.innerHTML = html;
         document.getElementById('totalDepositBox').innerText = totalDeposit + ' جنيه';
         document.getElementById('totalRevenueBox').innerText = totalRevenue + ' جنيه';
-        document.getElementById('totalCountBox').innerText = cachedBookings.length;
+        document.getElementById('totalCountBox').innerText = allBookingsList.length;
     }
 
     async function deleteBookingRow(bookingId) {
         if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً؟')) return;
         
-        cachedBookings = cachedBookings.filter(b => String(b.id) !== String(bookingId));
-        renderDashboardTable(false);
-
         try {
-            fetch(WEB_APP_URL, {
+            await fetch(WEB_APP_URL, {
                 method: 'POST',
                 mode: 'no-cors',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'delete', id: bookingId })
             });
+            await new Promise(r => setTimeout(r, 1000));
+            renderDashboardTable();
         } catch (e) {
             console.error("Error deleting:", e);
         }
@@ -917,7 +902,7 @@
     }
 
     async function printReceiptData(bookingId) {
-        let allBookingsList = await fetchBookingsFromSheet();
+        let allBookingsList = await fetchFreshBookingsFromSheet();
         const booking = allBookingsList.find(b => String(b.id) === String(bookingId));
         if (!booking) return;
         let cleanDate = String(booking.date).split('T')[0];
