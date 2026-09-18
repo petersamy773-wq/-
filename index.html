@@ -236,7 +236,7 @@
         </div>
     </div>
 
-    <!-- نافذة إضافة مريض Walk-in سريع -->
+    <!-- نافذة إضافة مريض Walk-in سريع (غير مقيد بالساعة 10) -->
     <div id="walkinModal">
         <div class="walkin-box">
             <h3 style="color: var(--primary-dark); margin-top:0; text-align:center;">إضافة مريض عيادة مباشر (Walk-in) 🚶‍♂️</h3>
@@ -266,7 +266,7 @@
                 <label>تاريخ الحجز:</label>
                 <input type="date" id="walkinDate">
             </div>
-            <button class="action-btn" id="walkinSubmitBtn" onclick="submitWalkinAppointment()">تسجيل الحجز فوراً</button>
+            <button class="action-btn" id="walkinSubmitBtn" onclick="submitWalkinAppointment()">تسجيل المريض فوراً</button>
             <button onclick="closeWalkinModal()" style="background:#7f8c8d; color:white; border:none; padding:8px; width:100%; border-radius:6px; margin-top:5px; cursor:pointer;">إلغاء</button>
         </div>
     </div>
@@ -370,6 +370,8 @@
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzcR56CAfJxU7wDmZmjI06NbsKMFtiRxsX1oQnaRX8ITIBRFvIggOq7KB75PeJmTM10OA/exec";
 
     let autoRefreshInterval = null;
+    let cachedBookings = [];
+    let isFetching = false;
     let isSubmitting = false;
 
     window.onload = function() {
@@ -397,6 +399,9 @@
                 }
             }
         });
+
+        // تحميل أولي سريع للكاش في الخلفية
+        fetchBookingsFromSheet(true);
     };
 
     function closeLoginModal() {
@@ -433,24 +438,31 @@
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
         } else {
             document.getElementById('dashboardSection').classList.add('active');
-            renderDashboardTable();
+            renderDashboardTable(true);
             
             if (autoRefreshInterval) clearInterval(autoRefreshInterval);
             autoRefreshInterval = setInterval(() => {
-                renderDashboardTable(false);
+                renderDashboardTable(false); // تحديث صامت في الخلفية بدون مسح الجدول لمنع الاختفاء المفاجئ
             }, 15000);
         }
     }
 
-    async function fetchFreshBookingsFromSheet() {
+    // نظام كاش ذكي يمنع اختفاء الحجوزات ويضمن سرعة صاروخية
+    async function fetchBookingsFromSheet(force = false) {
+        if (isFetching && !force) return cachedBookings;
+        isFetching = true;
         try {
             const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
             const data = await response.json();
-            return Array.isArray(data) ? data : [];
+            if (Array.isArray(data) && data.length > 0) {
+                cachedBookings = data;
+            }
         } catch (e) {
             console.error("Error fetching:", e);
-            return [];
+        } finally {
+            isFetching = false;
         }
+        return cachedBookings;
     }
 
     function parseTimeToMinutes(timeStr) {
@@ -492,9 +504,9 @@
         return 30;
     }
 
-    // دالة حساب الوقت الذكي مع تحديد نقطة البداية بناءً على الوقت الفعلي اليوم
-    async function calculateSmartTimeSlot(date, duration) {
-        let allBookingsList = await fetchFreshBookingsFromSheet();
+    // دالة حساب الوقت الذكي (مع إضافة فترة السماحة 15 دقيقة للأونلاين، وبدون قيود للـ Walk-in)
+    async function calculateSmartTimeSlot(date, duration, isWalkin = false) {
+        let allBookingsList = await fetchBookingsFromSheet(true);
         const dayBookings = allBookingsList
             .filter(b => String(b.date).split('T')[0].trim() === String(date).trim())
             .map(b => {
@@ -505,18 +517,22 @@
             .sort((a, b) => a.startMin - b.startMin);
 
         const CLINIC_START = 14 * 60; // 2:00 ظهراً
-        const CLINIC_END = 22 * 60;   // 10:00 مساءً
-        const BUFFER = 10;            // استراحة 10 دقائق
+        // الـ Walk-in غير مقيد بساعة إغلاق، يمكن استقباله حتى بعد 10 مساءً لو متاح
+        const CLINIC_END = isWalkin ? (26 * 60) : (22 * 60); 
+        const BUFFER = 10;            // استراحة 10 دقائق بين المرضى
 
-        // تحديد نقطة بداية الحساب لليوم الحالي
         const now = new Date();
         const todayStr = now.toISOString().split('T')[0];
         let baselineStart = CLINIC_START;
 
         if (date === todayStr) {
             let currentMinutes = now.getHours() * 60 + now.getMinutes();
-            // لو الوقت الحالي بعد بداية العيادة، نبدأ من الوقت الحالي، وإلا فنبدأ من 2 ظهراً
             baselineStart = Math.max(CLINIC_START, currentMinutes);
+        }
+
+        // إضافة فترة السماحة (15 دقيقة) للحجز الإلكتروني فقط ليتيح للمريض فرصة التحرك من المنزل
+        if (!isWalkin && date === todayStr) {
+            baselineStart += 15;
         }
 
         let assignedStart = -1;
@@ -526,7 +542,6 @@
             assignedStart = baselineStart;
             assignedEnd = baselineStart + duration;
         } else {
-            // التحقق هل يمكن الحجز قبل أول مريض في الجدول؟
             if (dayBookings[0].startMin - baselineStart >= duration) {
                 assignedStart = baselineStart;
                 assignedEnd = baselineStart + duration;
@@ -586,12 +601,12 @@
         isSubmitting = true;
         const submitBtn = document.getElementById('submitBookingBtn');
         submitBtn.disabled = true;
-        submitBtn.innerText = 'جاري حساب الجدول وتأكيد الميعاد... ⏳';
+        submitBtn.innerText = 'جاري منح فترة السماحة وحساب الميعاد الذكي... ⏳';
 
-        const slot = await calculateSmartTimeSlot(date, duration);
+        const slot = await calculateSmartTimeSlot(date, duration, false);
 
         if (slot.assignedStart === -1 || slot.assignedEnd > 1320) {
-            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً أو انتهت الأوقات المتاحة، برجاء اختيار يوم آخر.');
+            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             isSubmitting = false;
@@ -625,7 +640,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            await new Promise(r => setTimeout(r, 1200));
+            cachedBookings.push(newBooking);
         } catch (e) {
             console.error(e);
         }
@@ -643,11 +658,11 @@
             <p><b>المريض:</b> ${name} (${phone})</p>
             <p><b>الخدمة:</b> ${service} (${price} جنيه)</p>
             <p><b>تاريخ الحجز:</b> ${date}</p>
-            <p><b>ميعاد الجلسة الذكي:</b> <span style="color: var(--danger); font-weight: bold; font-size: 17px;">${assignedTimeStr}</span></p>
+            <p><b>ميعاد الجلسة الذكي (مضاف إليه 15 دقيقة سماحة للتحرك):</b> <span style="color: var(--danger); font-weight: bold; font-size: 17px;">${assignedTimeStr}</span></p>
             <hr>
             <p><b>العربون المطلوب (20%):</b> <span style="color: #d35400; font-weight: bold; font-size: 18px;">${deposit} جنيه</span></p>
             <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 10px; border-radius: 5px; margin-top: 10px; color: #856404; font-size: 14px;">
-                ⚠️ <b>تنبيه هام جداً:</b> برجاء أخذ <b>سكرين شوت (لقطة شاشة)</b> لهذا الإيصال، والحضور قبل الميعاد بـ <b>10 دقائق</b> كاملة مع إظهار السكرين شوت عند الاستقبال.
+                ⚠️ <b>تنبيه هام جداً:</b> برجاء أخذ <b>سكرين شوت (لقطة شاشة)</b> لهذا الإيصال، والحضور في الميعاد المحدد مع إظهار السكرين شوت عند الاستقبال.
             </div>
             <button class="action-btn" style="background:#3498db; margin-top:10px;" onclick="printReceiptData('${bookingCode}')">طباعة إيصال الحجز 🖨️</button>
         `;
@@ -678,13 +693,14 @@
         isSubmitting = true;
         const walkinBtn = document.getElementById('walkinSubmitBtn');
         walkinBtn.disabled = true;
-        walkinBtn.innerText = 'جاري التسجيل...';
+        walkinBtn.innerText = 'جاري التسجيل الفوري...';
 
-        const slot = await calculateSmartTimeSlot(date, duration);
+        // تمرير true لـ isWalkin ليتجاوز قيد الساعة 10 مساءً
+        const slot = await calculateSmartTimeSlot(date, duration, true);
         if (slot.assignedStart === -1) {
-            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة!');
+            alert('عذراً، لا توجد فترات متاحة لهذا اليوم.');
             walkinBtn.disabled = false;
-            walkinBtn.innerText = 'تسجيل الحجز فوراً';
+            walkinBtn.innerText = 'تسجيل المريض فوراً';
             isSubmitting = false;
             return;
         }
@@ -714,17 +730,17 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            await new Promise(r => setTimeout(r, 1200));
+            cachedBookings.push(newBooking);
 
             closeWalkinModal();
             document.getElementById('walkinName').value = '';
             document.getElementById('walkinPhone').value = '';
-            renderDashboardTable();
+            renderDashboardTable(false);
         } catch (e) {
             console.error(e);
         } finally {
             walkinBtn.disabled = false;
-            walkinBtn.innerText = 'تسجيل الحجز فوراً';
+            walkinBtn.innerText = 'تسجيل المريض فوراً';
             isSubmitting = false;
         }
     }
@@ -734,6 +750,10 @@
         btnElement.disabled = true;
 
         const newStatus = (currentStatus.trim() === 'confirmed') ? 'pending' : 'confirmed';
+
+        let found = cachedBookings.find(b => String(b.id) === String(bookingId));
+        if (found) found.status = newStatus;
+        renderDashboardTable(false);
 
         const updatedBooking = {
             id: bookingId,
@@ -764,27 +784,24 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatedBooking)
             });
-
-            await new Promise(r => setTimeout(r, 1000));
-            renderDashboardTable();
         } catch (e) {
             console.error(e);
+        } finally {
             btnElement.disabled = false;
         }
     }
 
-    async function renderDashboardTable(showLoading = true) {
+    async function renderDashboardTable(forceFetch = false) {
         const tbody = document.getElementById('appointmentsTableBody');
-        if (showLoading) {
-            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث المباشر من الشيت...</td></tr>`;
+        if (forceFetch || cachedBookings.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث الذكي...</td></tr>`;
+            await fetchBookingsFromSheet(true);
         }
-
-        let allBookingsList = await fetchFreshBookingsFromSheet();
 
         let totalDeposit = 0;
         let totalRevenue = 0;
 
-        if (!allBookingsList || allBookingsList.length === 0) {
+        if (!cachedBookings || cachedBookings.length === 0) {
             tbody.innerHTML = `<tr><td colspan="9" style="color: #777; padding: 15px;">لا توجد حجوزات مسجلة حالياً.</td></tr>`;
             document.getElementById('totalDepositBox').innerText = '0 جنيه';
             document.getElementById('totalRevenueBox').innerText = '0 جنيه';
@@ -792,7 +809,7 @@
             return;
         }
 
-        let sortedList = [...allBookingsList].sort((a, b) => {
+        let sortedList = [...cachedBookings].sort((a, b) => {
             let dateA = String(a.date).split('T')[0];
             let dateB = String(b.date).split('T')[0];
             if (dateA !== dateB) return dateA.localeCompare(dateB);
@@ -820,7 +837,7 @@
             const statusText = isConfirmed ? 'مؤكد ✅' : 'انتظار ⏳';
 
             let cleanPhone = String(b.phone).startsWith('0') ? '2' + b.phone : b.phone;
-            let waMsg = encodeURIComponent(`مرحباً يا ${b.name}، تم تأكيد حجزك برقم دور (${queueCounter}) في عيادة Peter Dental Zone برقم كود (#${b.id}) في تاريخ ${cleanDate} الساعة ${b.time}. برجاء الحضور قبل الميعاد بـ 10 دقائق وأخذ سكرين شوت للإيصال. ننتظر زيارتك! ✨`);
+            let waMsg = encodeURIComponent(`مرحباً يا ${b.name}، تم تأكيد حجزك برقم دور (${queueCounter}) في عيادة Peter Dental Zone برقم كود (#${b.id}) في تاريخ ${cleanDate} الساعة ${b.time}. برجاء الحضور في الميعاد وأخذ سكرين شوت للإيصال. ننتظر زيارتك! ✨`);
             let waLink = `https://wa.me/${cleanPhone}?text=${waMsg}`;
 
             html += `
@@ -851,12 +868,15 @@
         tbody.innerHTML = html;
         document.getElementById('totalDepositBox').innerText = totalDeposit + ' جنيه';
         document.getElementById('totalRevenueBox').innerText = totalRevenue + ' جنيه';
-        document.getElementById('totalCountBox').innerText = allBookingsList.length;
+        document.getElementById('totalCountBox').innerText = cachedBookings.length;
     }
 
     async function deleteBookingRow(bookingId) {
         if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً؟')) return;
         
+        cachedBookings = cachedBookings.filter(b => String(b.id) !== String(bookingId));
+        renderDashboardTable(false);
+
         try {
             await fetch(WEB_APP_URL, {
                 method: 'POST',
@@ -864,8 +884,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'delete', id: bookingId })
             });
-            await new Promise(r => setTimeout(r, 1000));
-            renderDashboardTable();
         } catch (e) {
             console.error("Error deleting:", e);
         }
@@ -902,7 +920,7 @@
                     <p><b>حالة التأكيد:</b> ${status === 'confirmed' ? 'مؤكد ✅' : 'قيد الانتظار ⏳'}</p>
                 </div>
                 <div class="warning-box">
-                    ⚠️ تنبيه هـام: برجاء أخذ <b>سكرين شوت (لقطة شاشة)</b> لهذا الإيصال، والحضور قبل الميعاد بـ <b>10 دقائق</b> وإظهار السكرين شوت عند الاستقبال.
+                    ⚠️ تنبيه هـام: برجاء أخذ <b>سكرين شوت (لقطة شاشة)</b> لهذا الإيصال، والحضور في الميعاد وإظهار السكرين شوت عند الاستقبال.
                 </div>
                 <div class="footer">شكراً لاختيارك عيادتنا. نتمنى لك دوام الصحة.</div>
                 <script>window.print();<\/script>
@@ -913,7 +931,7 @@
     }
 
     async function printReceiptData(bookingId) {
-        let allBookingsList = await fetchFreshBookingsFromSheet();
+        let allBookingsList = await fetchBookingsFromSheet();
         const booking = allBookingsList.find(b => String(b.id) === String(bookingId));
         if (!booking) return;
         let cleanDate = String(booking.date).split('T')[0];
