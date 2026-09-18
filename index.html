@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Peter Dental Zone - النظام السحابي المتكامل</title>
+    <title>Peter Dental Zone - النظام المتكامل الشامل</title>
     <style>
         :root {
             --primary: #00897b;
@@ -188,8 +188,6 @@
             background-color: #f9f9f9;
         }
 
-        .btn-confirm { background: var(--accent); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
-        .btn-delete { background: var(--danger); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; }
         .btn-whatsapp { background: var(--whatsapp); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; margin-bottom: 3px;}
         .btn-print { background: #3498db; color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
 
@@ -198,36 +196,6 @@
         .status-confirmed { background: var(--accent); color: var(--white); }
         .queue-badge { background: var(--primary-dark); color: white; padding: 3px 8px; border-radius: 50%; font-weight: bold; }
     </style>
-
-    <!-- استدعاء مكتبات Firebase من Google CDNs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyAsAbbI2yyvfWIo5YmB4zE2R2jf7vQMzmk",
-            authDomain: "peterdentalzone.firebaseapp.com",
-            projectId: "peterdentalzone",
-            storageBucket: "peterdentalzone.firebasestorage.app",
-            messagingSenderId: "510862408180",
-            appId: "1:510862408180:web:d4fccf7845a21adffc21a1",
-            measurementId: "G-H00DB22X1B"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-
-        // جعل الدوال متاحة عالمياً داخل الصفحة
-        window.db = db;
-        window.collection = collection;
-        window.addDoc = addDoc;
-        window.getDocs = getDocs;
-        window.doc = doc;
-        window.updateDoc = updateDoc;
-        window.deleteDoc = deleteDoc;
-        window.query = query;
-        window.orderBy = orderBy;
-    </script>
 </head>
 <body>
 
@@ -295,7 +263,7 @@
             <input type="text" id="paymentRef" placeholder="اكتب رقم العملية إن وجد">
         </div>
 
-        <button class="action-btn" onclick="autoBookAppointment()">احصل على ميعادك الذكي وتأكيد فوري</button>
+        <button class="action-btn" id="submitBookingBtn" onclick="autoBookAppointment()">احصل على ميعادك الذكي وتأكيد فوري</button>
 
         <div id="summary"></div>
     </div>
@@ -303,7 +271,7 @@
     <!-- لوحة تحكم الطبيب -->
     <div id="dashboardSection" class="section-view">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
-            <h3 style="color: var(--primary-dark); margin: 0;">لوحة تحكم عيادة Peter Dental Zone (السحابية)</h3>
+            <h3 style="color: var(--primary-dark); margin: 0;">لوحة تحكم عيادة Peter Dental Zone (Google Sheets)</h3>
             <div>
                 <button onclick="switchTab('booking')" style="background: #7f8c8d; color: white; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer;">العودة للحجز 🔙</button>
             </div>
@@ -340,7 +308,7 @@
                     </tr>
                 </thead>
                 <tbody id="appointmentsTableBody">
-                    <tr><td colspan="9" style="padding: 20px; color: #777;">جاري تحميل البيانات من السحابة...</td></tr>
+                    <tr><td colspan="9" style="padding: 20px; color: #777;">جاري تحميل البيانات من الشيت...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -351,6 +319,7 @@
 <script>
     const ADMIN_EMAIL = "petersamy773@gmail.com";
     const ADMIN_PASS = "P3534Sam6@Lab8b1985";
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzcR56CAfJxU7wDmZmjI06NbsKMFtiRxsX1oQnaRX8ITIBRFvIggOq7KB75PeJmTM10OA/exec";
 
     window.onload = function() {
         const today = new Date().toISOString().split('T')[0];
@@ -407,16 +376,13 @@
         }
     }
 
-    async function loadBookingsFromCloud() {
+    async function fetchBookingsFromSheet() {
         try {
-            const querySnapshot = await window.getDocs(window.collection(window.db, "bookings"));
-            let bookingsList = [];
-            querySnapshot.forEach((docSnap) => {
-                bookingsList.push({ docId: docSnap.id, ...docSnap.data() });
-            });
-            return bookingsList;
+            const response = await fetch(WEB_APP_URL);
+            const data = await response.json();
+            return data;
         } catch (e) {
-            console.error(e);
+            console.error("Error fetching from sheet:", e);
             return [];
         }
     }
@@ -444,12 +410,15 @@
         const price = parseInt(select.options[select.selectedIndex].getAttribute('data-price'));
         const deposit = price * 0.20; 
 
-        // جلب الحجوزات الحالية من السحابة لحساب المواعيد بدقة
-        let allBookingsList = await loadBookingsFromCloud();
+        const submitBtn = document.getElementById('submitBookingBtn');
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'جاري تسجيل الحجز في الشيت... ⏳';
+
+        let allBookingsList = await fetchBookingsFromSheet();
 
         const dayBookings = allBookingsList
             .filter(b => b.date === date)
-            .sort((a, b) => Number(a.startMin) - Number(b.startMin));
+            .sort((a, b) => Number(a.startMin || 0) - Number(b.startMin || 0));
 
         const CLINIC_START = 14 * 60; 
         const CLINIC_END = 22 * 60;   
@@ -463,13 +432,13 @@
             assignedEnd = CLINIC_START + duration;
         } else {
             let firstBooking = dayBookings[0];
-            if (Number(firstBooking.startMin) - CLINIC_START >= duration) {
+            if (Number(firstBooking.startMin || CLINIC_START) - CLINIC_START >= duration) {
                 assignedStart = CLINIC_START;
                 assignedEnd = CLINIC_START + duration;
             } else {
                 for (let i = 0; i < dayBookings.length - 1; i++) {
-                    let currentEndWithBuffer = Number(dayBookings[i].endMin) + BUFFER;
-                    let nextStart = Number(dayBookings[i + 1].startMin);
+                    let currentEndWithBuffer = Number(dayBookings[i].endMin || CLINIC_START) + BUFFER;
+                    let nextStart = Number(dayBookings[i + 1].startMin || CLINIC_END);
                     
                     if (nextStart - currentEndWithBuffer >= duration) {
                         assignedStart = currentEndWithBuffer;
@@ -480,7 +449,7 @@
 
                 if (assignedStart === -1) {
                     let lastBooking = dayBookings[dayBookings.length - 1];
-                    let potentialStart = Number(lastBooking.endMin) + BUFFER;
+                    let potentialStart = Number(lastBooking.endMin || CLINIC_START) + BUFFER;
                     
                     if (potentialStart + duration <= CLINIC_END) {
                         assignedStart = potentialStart;
@@ -492,6 +461,8 @@
 
         if (assignedStart === -1 || assignedEnd > CLINIC_END) {
             alert('عذراً، عيادة هذا اليوم مكتملة بالكامل أو لا توجد فترة زمنية متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             return;
         }
 
@@ -511,27 +482,31 @@
 
         const newBooking = {
             id: bookingCode,
+            date: date,
+            time: assignedTimeStr,
             name: name,
             phone: phone,
             service: service,
             price: price,
-            date: date,
-            startMin: assignedStart,
-            endMin: assignedEnd,
-            time: assignedTimeStr,
             deposit: deposit,
             paymentRef: paymentRef ? paymentRef : 'لم يُسجل بعد',
             status: isConfirmed ? 'confirmed' : 'pending',
             queueNum: patientQueueNumber
         };
 
-        // حفظ في السحابة فوراً
         try {
-            await window.addDoc(window.collection(window.db, "bookings"), newBooking);
+            await fetch(WEB_APP_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newBooking)
+            });
         } catch (e) {
-            alert('حدث خطأ أثناء حفظ الحجز في السحابة، تأكد من اتصال الإنترنت.');
-            return;
+            console.error(e);
         }
+
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
 
         const summaryDiv = document.getElementById('summary');
         summaryDiv.style.display = 'block';
@@ -558,15 +533,15 @@
 
     async function renderDashboardTable() {
         const tbody = document.getElementById('appointmentsTableBody');
-        tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث من السحابة...</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" style="padding: 20px; color: #777;">جاري التحديث من Google Sheet...</td></tr>`;
         
-        let allBookingsList = await loadBookingsFromCloud();
+        let allBookingsList = await fetchBookingsFromSheet();
 
         let totalDeposit = 0;
         let totalRevenue = 0;
 
-        if (allBookingsList.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" style="color: #777; padding: 15px;">لا توجد حجوزات مسجلة حالياً في السحابة.</td></tr>`;
+        if (!allBookingsList || allBookingsList.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="9" style="color: #777; padding: 15px;">لا توجد حجوزات مسجلة حالياً في الشيت.</td></tr>`;
             document.getElementById('totalDepositBox').innerText = '0 جنيه';
             document.getElementById('totalRevenueBox').innerText = '0 جنيه';
             document.getElementById('totalCountBox').innerText = '0';
@@ -574,8 +549,8 @@
         }
 
         let sortedList = [...allBookingsList].sort((a, b) => {
-            if (a.date !== b.date) return a.date.localeCompare(b.date);
-            return Number(a.startMin) - Number(b.startMin);
+            if (a.date !== b.date) return String(a.date).localeCompare(String(b.date));
+            return 0;
         });
 
         let html = '';
@@ -588,16 +563,15 @@
                 queueCounter = 1;
             }
 
-            if(b.status === 'confirmed') {
+            if(String(b.status).trim() === 'confirmed') {
                 totalDeposit += Number(b.deposit || 0);
             }
             totalRevenue += Number(b.price || 0);
 
-            const statusBadge = b.status === 'confirmed' 
+            const isConfirmed = String(b.status).trim() === 'confirmed';
+            const statusBadge = isConfirmed 
                 ? `<span class="status-badge status-confirmed">مؤكد ✅</span>` 
                 : `<span class="status-badge status-pending">انتظار ⏳</span>`;
-            
-            const confirmBtnText = b.status === 'confirmed' ? 'إلغاء التأكيد' : 'تأكيد';
 
             let cleanPhone = String(b.phone).startsWith('0') ? '2' + b.phone : b.phone;
             let waMsg = encodeURIComponent(`مرحباً يا ${b.name}، تم تأكيد حجزك برقم دور (${queueCounter}) في عيادة Peter Dental Zone برقم كود (#${b.id}) في تاريخ ${b.date} الساعة ${b.time}. برجاء الحضور قبل الميعاد بـ 10 دقائق وأخذ سكرين شوت للإيصال. ننتظر زيارتك! ✨`);
@@ -614,10 +588,8 @@
                     <td><b>${b.deposit} جـ</b><br><small>إيصال: ${b.paymentRef}</small></td>
                     <td>${statusBadge}</td>
                     <td>
-                        <button class="btn-confirm" onclick="toggleConfirm('${b.docId}', '${b.status}')">${confirmBtnText}</button>
                         <a href="${waLink}" target="_blank" class="btn-whatsapp">واتساب 💬</a>
-                        <button class="btn-print" onclick="printReceiptData('${b.id}')">طباعة 🖨️</button>
-                        <button class="btn-delete" onclick="deleteBooking('${b.docId}')">حذف</button>
+                        <button class="btn-print" onclick="printReceiptDirect('${b.id}', '${b.queueNum}', '${b.name}', '${b.phone}', '${b.service}', '${b.price}', '${b.date}', '${b.time}', '${b.deposit}', '${b.status}')">طباعة 🖨️</button>
                     </td>
                 </tr>
             `;
@@ -631,32 +603,7 @@
         document.getElementById('totalCountBox').innerText = allBookingsList.length;
     }
 
-    async function toggleConfirm(docId, currentStatus) {
-        const newStatus = currentStatus === 'confirmed' ? 'pending' : 'confirmed';
-        try {
-            await window.updateDoc(window.doc(window.db, "bookings", docId), { status: newStatus });
-            renderDashboardTable();
-        } catch (e) {
-            alert('حدث خطأ أثناء تحديث الحالة.');
-        }
-    }
-
-    async function deleteBooking(docId) {
-        if (confirm('هل أنت متأكد من حذف هذا الحجز نهائياً من السحابة؟')) {
-            try {
-                await window.deleteDoc(window.doc(window.db, "bookings", docId));
-                renderDashboardTable();
-            } catch (e) {
-                alert('حدث خطأ أثناء الحذف.');
-            }
-        }
-    }
-
-    async function printReceiptData(bookingId) {
-        let allBookingsList = await loadBookingsFromCloud();
-        const booking = allBookingsList.find(b => String(b.id) === String(bookingId));
-        if (!booking) return;
-
+    function printReceiptDirect(id, queueNum, name, phone, service, price, date, time, deposit, status) {
         let printWindow = window.open('', '_blank', 'width=400,height=650');
         printWindow.document.write(`
             <html dir="rtl">
@@ -674,17 +621,17 @@
                 <h2>Peter Dental Zone</h2>
                 <div style="font-size: 12px; color: #00897b; font-weight: bold;">مساحتك الخاصة لابتسامة مثالية ✨</div>
                 <div class="receipt-box">
-                    <p style="text-align: center; font-size: 18px; color: #c0392b; margin: 5px 0;"><b>رقم دورك: رقم ${booking.queueNum || 1}</b></p>
+                    <p style="text-align: center; font-size: 18px; color: #c0392b; margin: 5px 0;"><b>رقم دورك: رقم ${queueNum}</b></p>
                     <hr style="border: 0; border-top: 1px solid #ddd;">
-                    <p><b>كود الحجز:</b> #${booking.id}</p>
-                    <p><b>اسم المريض:</b> ${booking.name}</p>
-                    <p><b>رقم الموبايل:</b> ${booking.phone}</p>
-                    <p><b>الخدمة الطبية:</b> ${booking.service}</p>
-                    <p><b>تكلفة الخدمة:</b> ${booking.price} جنيه</p>
-                    <p><b>تاريخ الحجز:</b> ${booking.date}</p>
-                    <p><b>ميعاد الجلسة:</b> ${booking.time}</p>
-                    <p><b>العربون المطلوب:</b> ${booking.deposit} جنيه</p>
-                    <p><b>حالة التأكيد:</b> ${booking.status === 'confirmed' ? 'مؤكد ✅' : 'قيد الانتظار ⏳'}</p>
+                    <p><b>كود الحجز:</b> #${id}</p>
+                    <p><b>اسم المريض:</b> ${name}</p>
+                    <p><b>رقم الموبايل:</b> ${phone}</p>
+                    <p><b>الخدمة الطبية:</b> ${service}</p>
+                    <p><b>تكلفة الخدمة:</b> ${price} جنيه</p>
+                    <p><b>تاريخ الحجز:</b> ${date}</p>
+                    <p><b>ميعاد الجلسة:</b> ${time}</p>
+                    <p><b>العربون المطلوب:</b> ${deposit} جنيه</p>
+                    <p><b>حالة التأكيد:</b> ${status === 'confirmed' ? 'مؤكد ✅' : 'قيد الانتظار ⏳'}</p>
                 </div>
                 <div class="warning-box">
                     ⚠️ تنبيه هـام: برجاء أخذ <b>سكرين شوت (لقطة شاشة)</b> لهذا الإيصال، والحضور قبل الميعاد بـ <b>10 دقائق</b> وإظهار السكرين شوت عند الاستقبال.
@@ -695,6 +642,13 @@
             </html>
         `);
         printWindow.document.close();
+    }
+
+    async function printReceiptData(bookingId) {
+        let allBookingsList = await fetchBookingsFromSheet();
+        const booking = allBookingsList.find(b => String(b.id) === String(bookingId));
+        if (!booking) return;
+        printReceiptDirect(booking.id, booking.queueNum, booking.name, booking.phone, booking.service, booking.price, booking.date, booking.time, booking.deposit, booking.status);
     }
 </script>
 
