@@ -558,6 +558,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
+            
+            // انتظار قصير لضمان تسجيل الحجز في الشيت قبل المتابعة
+            await new Promise(resolve => setTimeout(resolve, 1500));
         } catch (e) {
             console.error(e);
         }
@@ -681,7 +684,7 @@
             setTimeout(() => {
                 renderDashboardTable();
             }, 1000);
-        } catch (e) {
+        }	catch (e) {
             console.error("Error deleting:", e);
             alert('حدث خطأ أثناء محاولة الحذف.');
         }
