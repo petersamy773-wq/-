@@ -397,6 +397,7 @@
         }
     }
 
+    // دالة دقيقة جداً لتحويل وقت النص (مثال: "2:30 مساءً" أو "2:00 ظهراً") إلى دقائق من بداية اليوم
     function parseTimeToMinutes(timeStr) {
         if (!timeStr) return 14 * 60;
         let clean = String(timeStr).trim();
@@ -465,7 +466,7 @@
 
         let allBookingsList = await fetchBookingsFromSheet();
 
-        // تصفية حجوزات اليوم بدقة تامة ومقارنة التاريخ كنص YYYY-MM-DD
+        // تصفية حجوزات اليوم المحدد بدقة تامة
         const dayBookings = allBookingsList
             .filter(b => {
                 let bDate = String(b.date).split('T')[0].trim();
@@ -559,8 +560,8 @@
                 body: JSON.stringify(newBooking)
             });
             
-            // انتظار قصير لضمان تسجيل الحجز في الشيت قبل المتابعة
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            // انتظار طويل نسبياً لضمان كتابة الصف في الشيت تماماً قبل أي عملية أخرى
+            await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (e) {
             console.error(e);
         }
@@ -684,7 +685,7 @@
             setTimeout(() => {
                 renderDashboardTable();
             }, 1000);
-        }	catch (e) {
+        } catch (e) {
             console.error("Error deleting:", e);
             alert('حدث خطأ أثناء محاولة الحذف.');
         }
