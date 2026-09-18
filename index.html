@@ -448,9 +448,9 @@
 
         let allBookingsList = await fetchBookingsFromSheet();
 
-        // تصفية حجوزات اليوم المحدد فقط
+        // تصفية وترتيب حجوزات اليوم المحدد تصاعدياً بالدقائق بدقة شديدة
         const dayBookings = allBookingsList
-            .filter(b => b.date === date)
+            .filter(b => String(b.date).trim() === String(date).trim())
             .map(b => {
                 let start = parseTimeToMinutes(b.time);
                 let dur = getServiceDuration(b.service);
@@ -461,39 +461,46 @@
             })
             .sort((a, b) => a.startMin - b.startMin);
 
-        const CLINIC_START = 14 * 60; // 2:00 ظهراً
-        const CLINIC_END = 22 * 60;   // 10:00 مساءً
-        const BUFFER = 10;            // 10 دقائق راحة بين المرضى
+        const CLINIC_START = 14 * 60; // 2:00 ظهراً بالدقائق (840 دقيقة)
+        const CLINIC_END = 22 * 60;   // 10:00 مساءً بالدقائق (1320 دقيقة)
+        const BUFFER = 10;            // 10 دقائق راحة إجبارية بين المرضى
 
         let assignedStart = -1;
         let assignedEnd = -1;
 
-        // خوارزمية البحث المتقدمة عن الفجوات (Gaps) أو المواعيد المتاحة بدقة
-        let pointer = CLINIC_START;
-
+        // خوارزمية التوقيت الذكي الفولاذية للفجوات والمواعيد
         if (dayBookings.length === 0) {
             assignedStart = CLINIC_START;
             assignedEnd = CLINIC_START + duration;
         } else {
-            // فحص هل فيه مكان فاضي في الأول خالص قبل أول مريض؟
-            if (dayBookings[0].startMin - pointer >= duration) {
-                assignedStart = pointer;
-                assignedEnd = pointer + duration;
+            // محاولة الحجز قبل أول مريض في اليوم لو فيه مساحة كافية
+            if (dayBookings[0].startMin - CLINIC_START >= duration) {
+                assignedStart = CLINIC_START;
+                assignedEnd = CLINIC_START + duration;
             } else {
-                // الفحص داخل الفجوات بين المرضى
+                // البحث في الفجوات بين المرضى المسجلين
+                let foundGap = false;
                 for (let i = 0; i < dayBookings.length; i++) {
-                    let currentBookingEndWithBuffer = dayBookings[i].endMin + BUFFER;
-                    
-                    let nextBookingStart = (i < dayBookings.length - 1) ? dayBookings[i + 1].startMin : CLINIC_END;
+                    let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
+                    let nextStart = (i < dayBookings.length - 1) ? dayBookings[i + 1].startMin : CLINIC_END;
 
-                    if (currentBookingEndWithBuffer > pointer) {
-                        pointer = currentBookingEndWithBuffer;
-                    }
+                    let availableSlotStart = Math.max(CLINIC_START, currentEndWithBuffer);
 
-                    if (nextBookingStart - pointer >= duration) {
-                        assignedStart = pointer;
-                        assignedEnd = pointer + duration;
+                    if (nextStart - availableSlotStart >= duration) {
+                        assignedStart = availableSlotStart;
+                        assignedEnd = availableSlotStart + duration;
+                        foundGap = true;
                         break;
+                    }
+                }
+
+                // لو ملقاش فجوة في النص، يحط المريض بعد آخر مريض خالص في اليوم
+                if (!foundGap) {
+                    let lastBooking = dayBookings[dayBookings.length - 1];
+                    let potentialStart = Math.max(CLINIC_START, lastBooking.endMin + BUFFER);
+                    if (potentialStart + duration <= CLINIC_END) {
+                        assignedStart = potentialStart;
+                        assignedEnd = potentialStart + duration;
                     }
                 }
             }
@@ -510,7 +517,7 @@
             const h = Math.floor(totalMins / 60);
             const m = totalMins % 60;
             const period = h >= 12 ? 'مساءً' : 'ظهراً';
-            const formattedH = h > 12 ? h - 12 : h;
+            const formattedH = h > 12 ? h - 12 : (h === 0 ? 12 : h);
             const formattedM = m < 10 ? '0' + m : m;
             return `${formattedH}:${formattedM} ${period}`;
         };
@@ -518,7 +525,7 @@
         const assignedTimeStr = formatTimeMinutes(assignedStart);
         const bookingCode = 'PDZ-' + Math.floor(1000 + Math.random() * 9000);
         const isConfirmed = paymentRef.length > 0;
-        const patientQueueNumber = allBookingsList.filter(b => b.date === date).length + 1;
+        const patientQueueNumber = dayBookings.length + 1;
 
         const newBooking = {
             id: bookingCode,
