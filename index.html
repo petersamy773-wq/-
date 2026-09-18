@@ -203,7 +203,6 @@
 <div class="container">
 
     <div class="clinic-header">
-        <!-- زر الأدمين المخفي داخل حرف الـ P (اضغط عليه 3 مرات متتالية) -->
         <div class="logo-icon" id="adminSecretBtn" title="Peter Dental Zone">P</div>
         <h1 class="clinic-name">Peter Dental Zone</h1>
         <div class="clinic-slogan">مساحتك الخاصة لابتسامة مثالية ✨</div>
@@ -388,7 +387,6 @@
         }
     }
 
-    // محرك تحويل الوقت النصي إلى دقائق رقمية للمقارنة الذكية بدقة
     function parseTimeToMinutes(timeStr) {
         if (!timeStr) return 14 * 60;
         let parts = timeStr.split(' ');
@@ -430,12 +428,10 @@
 
         let allBookingsList = await fetchBookingsFromSheet();
 
-        // التوقيت الذكي المحسّن بالدقائق لكل حجوزات نفس اليوم
         const dayBookings = allBookingsList
             .filter(b => b.date === date)
             .map(b => {
                 let start = parseTimeToMinutes(b.time);
-                // محاولة استنتاج مدة الخدمة القديمة تقريبياً أو افتراض 30 دقيقة لو غير متوفرة
                 let dur = 30;
                 if(b.service && b.service.includes('عصب')) dur = 60;
                 else if(b.service && (b.service.includes('تبييض') || b.service.includes('جراحي') || b.service.includes('لثة'))) dur = 45;
@@ -450,9 +446,9 @@
             })
             .sort((a, b) => a.startMin - b.startMin);
 
-        const CLINIC_START = 14 * 60; // تبدأ العيادة 2:00 ظهراً (14:00)
-        const CLINIC_END = 22 * 60;   // تنتهي العيادة 10:00 مساءً (22:00)
-        const BUFFER = 10;            // 10 دقائق تعقيم استراحة بين كل مريض والثاني
+        const CLINIC_START = 14 * 60; 
+        const CLINIC_END = 22 * 60;   
+        const BUFFER = 10;            
 
         let assignedStart = -1;
         let assignedEnd = -1;
@@ -587,7 +583,7 @@
         let currentDayTracker = '';
         let queueCounter = 1;
 
-        sortedList.forEach((b, index) => {
+        sortedList.forEach((b) => {
             if (currentDayTracker !== b.date) {
                 currentDayTracker = b.date;
                 queueCounter = 1;
@@ -620,7 +616,7 @@
                     <td>
                         <a href="${waLink}" target="_blank" class="btn-whatsapp">واتساب 💬</a>
                         <button class="btn-print" onclick="printReceiptDirect('${b.id}', '${queueCounter}', '${b.name}', '${b.phone}', '${b.service}', '${b.price}', '${b.date}', '${b.time}', '${b.deposit}', '${b.status}')">طباعة 🖨️</button>
-                        <button class="btn-delete" onclick="deleteBookingRow(${index})">حذف 🗑️</button>
+                        <button class="btn-delete" onclick="deleteBookingRow('${b.id}')">حذف 🗑️</button>
                     </td>
                 </tr>
             `;
@@ -634,18 +630,27 @@
         document.getElementById('totalCountBox').innerText = allBookingsList.length;
     }
 
-    // وظيفة حذف الحجز مباشرة من لوحة التحكم والتحديث الفوري
-    async function deleteBookingRow(index) {
-        if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً؟')) return;
+    // دالة حذف الحجز وتحديث الشيت تلقائياً بالكامل
+    async function deleteBookingRow(bookingId) {
+        if (!confirm('هل أنت متأكد من حذف هذا الحجز نهائياً من العيادة وشيت جوجل؟')) return;
         
-        let allBookingsList = await fetchBookingsFromSheet();
-        allBookingsList.splice(index, 1);
-
-        // لإرسال القائمة الجديدة المحدثة بالكامل للشيت عن طريق مسح القديم وكتابة الجديد، أو نقوم بعمل إعادة ضبط للشيت
-        // بما أن الويب أب الحالي يضيف صفوف جديدة، أفضل طريقة للحذف البسيط هي تعديل السطر من داخل شيت جوجل مباشرة، 
-        // أو استخدام أمر مخصص للحذف. للتسهيل، سنقوم بتنبيهك بمسح السطر من شيت جوجل أو إعادة كتابة الشيت.
-        alert('لحذف السطر نهائياً، قم بمسح السطر المطابق مباشرة من ملف Google Sheet الخاص بك وسيتحدث النظام تلقائياً.');
-        renderDashboardTable();
+        try {
+            await fetch(WEB_APP_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'delete', id: bookingId })
+            });
+            
+            alert('تم الحذف بنجاح من الشيت والنظام!');
+            // إعادة تحميل الجدول بعد لحظة قصيرة لتحديث البيانات المعروضة
+            setTimeout(() => {
+                renderDashboardTable();
+            }, 1000);
+        } catch (e) {
+            console.error("Error deleting:", e);
+            alert('حدث خطأ أثناء محاولة الحذف.');
+        }
     }
 
     function printReceiptDirect(id, queueNum, name, phone, service, price, date, time, deposit, status) {
@@ -693,8 +698,7 @@
         let allBookingsList = await fetchBookingsFromSheet();
         const booking = allBookingsList.find(b => String(b.id) === String(bookingId));
         if (!booking) return;
-        let queueNum = 1; // افتراضي للطباعة الفورية
-        printReceiptDirect(booking.id, queueNum, booking.name, booking.phone, booking.service, booking.price, booking.date, booking.time, booking.deposit, booking.status);
+        printReceiptDirect(booking.id, 1, booking.name, booking.phone, booking.service, booking.price, booking.date, booking.time, booking.deposit, booking.status);
     }
 </script>
 
