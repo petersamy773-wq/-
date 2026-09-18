@@ -130,7 +130,7 @@
             display: none;
         }
 
-        #loginModal {
+        #loginModal, #walkinModal {
             display: none;
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -139,11 +139,11 @@
             align-items: center;
             z-index: 9999;
         }
-        .login-box {
+        .login-box, .walkin-box {
             background: white;
             padding: 30px;
             border-radius: 10px;
-            width: 350px;
+            width: 380px;
             box-shadow: 0 5px 20px rgba(0,0,0,0.3);
             text-align: right;
         }
@@ -192,10 +192,14 @@
         .btn-print { background: #3498db; color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
         .btn-delete { background: var(--danger); color: var(--white); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; margin-bottom: 3px;}
         .btn-refresh { background: #2980b9; color: var(--white); border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer; }
+        .btn-walkin { background: #8e44ad; color: var(--white); border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer; font-weight: bold; }
 
-        .status-badge { padding: 3px 6px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block; }
-        .status-pending { background: var(--warning); color: var(--white); }
-        .status-confirmed { background: var(--accent); color: var(--white); }
+        .status-btn { padding: 5px 10px; border-radius: 6px; font-weight: bold; font-size: 12px; border: none; cursor: pointer; transition: 0.2s; }
+        .status-btn.confirmed { background: var(--accent); color: var(--white); }
+        .status-btn.confirmed:hover { background: #219653; }
+        .status-btn.pending { background: var(--warning); color: var(--white); }
+        .status-btn.pending:hover { background: #d68910; }
+
         .queue-badge { background: var(--primary-dark); color: white; padding: 3px 8px; border-radius: 50%; font-weight: bold; }
     </style>
 </head>
@@ -223,6 +227,41 @@
             </div>
             <button class="action-btn" onclick="verifyAdminLogin()">دخول آمن</button>
             <button onclick="closeLoginModal()" style="background:#7f8c8d; color:white; border:none; padding:8px; width:100%; border-radius:6px; margin-top:5px; cursor:pointer;">إلغاء</button>
+        </div>
+    </div>
+
+    <!-- نافذة إضافة مريض Walk-in سريع -->
+    <div id="walkinModal">
+        <div class="walkin-box">
+            <h3 style="color: var(--primary-dark); margin-top:0; text-align:center;">إضافة مريض عيادة مباشر (Walk-in) 🚶‍♂️</h3>
+            <div class="form-group">
+                <label>اسم المريض:</label>
+                <input type="text" id="walkinName" placeholder="اسم المريض">
+            </div>
+            <div class="form-group">
+                <label>رقم الموبايل:</label>
+                <input type="tel" id="walkinPhone" maxlength="11" placeholder="01xxxxxxxxx">
+            </div>
+            <div class="form-group">
+                <label>اختر الخدمة:</label>
+                <select id="walkinService">
+                    <option value="كشف واستشارة" data-duration="15" data-price="300">كشف واستشارة (15 دقيقة) - 300 جنيه</option>
+                    <option value="حشو عصب" data-duration="60" data-price="1500">حشو عصب (60 دقيقة) - 1500 جنيه</option>
+                    <option value="تبييض الأسنان" data-duration="45" data-price="2000">تبييض الأسنان (45 دقيقة) - 2000 جنيه</option>
+                    <option value="تركيبات (طربوش/جسر)" data-duration="30" data-price="2500">تركيبات (طربوش/جسر) (30 دقيقة) - 2500 جنيه</option>
+                    <option value="حشو تجميلي" data-duration="30" data-price="600">حشو تجميلي (30 دقيقة) - 600 جنيه</option>
+                    <option value="خلع عادي" data-duration="20" data-price="400">خلع عادي (20 دقيقة) - 400 جنيه</option>
+                    <option value="خلع جراحي" data-duration="45" data-price="1200">خلع جراحي لضرس العقل (45 دقيقة) - 1200 جنيه</option>
+                    <option value="تنظيف جير وتلميع" data-duration="30" data-price="500">تنظيف جير وتلميع (30 دقيقة) - 500 جنيه</option>
+                    <option value="علاج لثة وتنظيف عميق" data-duration="45" data-price="800">علاج لثة وتنظيف عميق (45 دقيقة) - 800 جنيه</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>تاريخ الحجز:</label>
+                <input type="date" id="walkinDate">
+            </div>
+            <button class="action-btn" onclick="submitWalkinAppointment()">تسجيل الحجز فوراً</button>
+            <button onclick="closeWalkinModal()" style="background:#7f8c8d; color:white; border:none; padding:8px; width:100%; border-radius:6px; margin-top:5px; cursor:pointer;">إلغاء</button>
         </div>
     </div>
 
@@ -272,8 +311,9 @@
     <!-- لوحة تحكم الطبيب -->
     <div id="dashboardSection" class="section-view">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
-            <h3 style="color: var(--primary-dark); margin: 0;">لوحة تحكم عيادة Peter Dental Zone (Google Sheets)</h3>
-            <div style="display: flex; gap: 8px;">
+            <h3 style="color: var(--primary-dark); margin: 0;">لوحة تحكم عيادة Peter Dental Zone</h3>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button class="btn-walkin" onclick="openWalkinModal()">➕ إضافة مريض Walk-in</button>
                 <button class="btn-refresh" onclick="renderDashboardTable()">🔄 تحديث الآن</button>
                 <button onclick="switchTab('booking')" style="background: #7f8c8d; color: white; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer;">العودة للحجز 🔙</button>
             </div>
@@ -305,7 +345,7 @@
                         <th>الخدمة / السعر</th>
                         <th>الميعاد</th>
                         <th>العربون / الإيصال</th>
-                        <th>الحالة</th>
+                        <th>الحالة (تغيير بنقرة)</th>
                         <th>الإجراءات والواتساب</th>
                     </tr>
                 </thead>
@@ -329,6 +369,7 @@
         const today = new Date().toISOString().split('T')[0];
         document.getElementById("bookingDate").setAttribute('min', today);
         document.getElementById("bookingDate").value = today;
+        document.getElementById("walkinDate").value = today;
 
         let clickCount = 0;
         let clickTimer = null;
@@ -353,6 +394,14 @@
 
     function closeLoginModal() {
         document.getElementById('loginModal').style.display = 'none';
+    }
+
+    function openWalkinModal() {
+        document.getElementById('walkinModal').style.display = 'flex';
+    }
+
+    function closeWalkinModal() {
+        document.getElementById('walkinModal').style.display = 'none';
     }
 
     function verifyAdminLogin() {
@@ -397,7 +446,6 @@
         }
     }
 
-    // دالة دقيقة جداً لتحويل وقت النص (مثال: "2:30 مساءً" أو "2:00 ظهراً") إلى دقائق من بداية اليوم
     function parseTimeToMinutes(timeStr) {
         if (!timeStr) return 14 * 60;
         let clean = String(timeStr).trim();
@@ -437,6 +485,60 @@
         return 30;
     }
 
+    // دالة حساب الميعاد الذكي المشتركة
+    async function calculateSmartTimeSlot(date, duration) {
+        let allBookingsList = await fetchBookingsFromSheet();
+        const dayBookings = allBookingsList
+            .filter(b => String(b.date).split('T')[0].trim() === String(date).trim())
+            .map(b => {
+                let start = parseTimeToMinutes(b.time);
+                let dur = Number(b.duration) || getServiceDurationFromName(b.service);
+                return { startMin: start, endMin: start + dur };
+            })
+            .sort((a, b) => a.startMin - b.startMin);
+
+        const CLINIC_START = 14 * 60; // 2:00 ظهراً
+        const CLINIC_END = 22 * 60;   // 10:00 مساءً
+        const BUFFER = 10;            // استراحة 10 دقائق
+
+        let assignedStart = -1;
+        let assignedEnd = -1;
+
+        if (dayBookings.length === 0) {
+            assignedStart = CLINIC_START;
+            assignedEnd = CLINIC_START + duration;
+        } else {
+            if (dayBookings[0].startMin - CLINIC_START >= duration) {
+                assignedStart = CLINIC_START;
+                assignedEnd = CLINIC_START + duration;
+            } else {
+                let foundGap = false;
+                for (let i = 0; i < dayBookings.length; i++) {
+                    let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
+                    let nextStart = (i < dayBookings.length - 1) ? dayBookings[i + 1].startMin : CLINIC_END;
+                    let availableSlotStart = Math.max(CLINIC_START, currentEndWithBuffer);
+
+                    if (nextStart - availableSlotStart >= duration) {
+                        assignedStart = availableSlotStart;
+                        assignedEnd = availableSlotStart + duration;
+                        foundGap = true;
+                        break;
+                    }
+                }
+                if (!foundGap) {
+                    let lastBooking = dayBookings[dayBookings.length - 1];
+                    let potentialStart = Math.max(CLINIC_START, lastBooking.endMin + BUFFER);
+                    if (potentialStart + duration <= CLINIC_END) {
+                        assignedStart = potentialStart;
+                        assignedEnd = potentialStart + duration;
+                    }
+                }
+            }
+        }
+
+        return { assignedStart, assignedEnd, queueCount: dayBookings.length };
+    }
+
     async function autoBookAppointment() {
         const name = document.getElementById('patientName').value.trim();
         const phone = document.getElementById('patientPhone').value.trim();
@@ -464,78 +566,19 @@
         submitBtn.disabled = true;
         submitBtn.innerText = 'جاري حساب الجدول الزمني الذكي... ⏳';
 
-        let allBookingsList = await fetchBookingsFromSheet();
+        const slot = await calculateSmartTimeSlot(date, duration);
 
-        // تصفية حجوزات اليوم المحدد بدقة تامة
-        const dayBookings = allBookingsList
-            .filter(b => {
-                let bDate = String(b.date).split('T')[0].trim();
-                return bDate === String(date).trim();
-            })
-            .map(b => {
-                let start = parseTimeToMinutes(b.time);
-                let dur = Number(b.duration) || getServiceDurationFromName(b.service);
-                return {
-                    startMin: start,
-                    endMin: start + dur
-                };
-            })
-            .sort((a, b) => a.startMin - b.startMin);
-
-        const CLINIC_START = 14 * 60; // 2:00 ظهراً (840 دقيقة)
-        const CLINIC_END = 22 * 60;   // 10:00 مساءً (1320 دقيقة)
-        const BUFFER = 10;            // 10 دقائق استراحة إجبارية
-
-        let assignedStart = -1;
-        let assignedEnd = -1;
-
-        if (dayBookings.length === 0) {
-            assignedStart = CLINIC_START;
-            assignedEnd = CLINIC_START + duration;
-        } else {
-            // التحقق من إمكانية الحجز في البداية قبل أول مريض
-            if (dayBookings[0].startMin - CLINIC_START >= duration) {
-                assignedStart = CLINIC_START;
-                assignedEnd = CLINIC_START + duration;
-            } else {
-                let foundGap = false;
-                for (let i = 0; i < dayBookings.length; i++) {
-                    let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
-                    let nextStart = (i < dayBookings.length - 1) ? dayBookings[i + 1].startMin : CLINIC_END;
-
-                    let availableSlotStart = Math.max(CLINIC_START, currentEndWithBuffer);
-
-                    if (nextStart - availableSlotStart >= duration) {
-                        assignedStart = availableSlotStart;
-                        assignedEnd = availableSlotStart + duration;
-                        foundGap = true;
-                        break;
-                    }
-                }
-
-                // لو ملقاش فجوة في النص، يحط الحجز بعد آخر مريض خالص مع إضافة الـ 10 دقائق
-                if (!foundGap) {
-                    let lastBooking = dayBookings[dayBookings.length - 1];
-                    let potentialStart = Math.max(CLINIC_START, lastBooking.endMin + BUFFER);
-                    if (potentialStart + duration <= CLINIC_END) {
-                        assignedStart = potentialStart;
-                        assignedEnd = potentialStart + duration;
-                    }
-                }
-            }
-        }
-
-        if (assignedStart === -1 || assignedEnd > CLINIC_END) {
+        if (slot.assignedStart === -1 || slot.assignedEnd > 1320) {
             alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً أو لا توجد فترة متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             return;
         }
 
-        const assignedTimeStr = formatTimeMinutes(assignedStart);
+        const assignedTimeStr = formatTimeMinutes(slot.assignedStart);
         const bookingCode = 'PDZ-' + Math.floor(1000 + Math.random() * 9000);
         const isConfirmed = paymentRef.length > 0;
-        const patientQueueNumber = dayBookings.length + 1;
+        const patientQueueNumber = slot.queueCount + 1;
 
         const newBooking = {
             id: bookingCode,
@@ -559,8 +602,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            
-            // انتظار طويل نسبياً لضمان كتابة الصف في الشيت تماماً قبل أي عملية أخرى
             await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (e) {
             console.error(e);
@@ -590,6 +631,112 @@
         document.getElementById('patientName').value = '';
         document.getElementById('patientPhone').value = '';
         document.getElementById('paymentRef').value = '';
+    }
+
+    // تسجيل مريض Walk-in مباشر من لوحة التحكم
+    async function submitWalkinAppointment() {
+        const name = document.getElementById('walkinName').value.trim();
+        const phone = document.getElementById('walkinPhone').value.trim();
+        const select = document.getElementById('walkinService');
+        const service = select.value;
+        const date = document.getElementById('walkinDate').value;
+
+        if (!name || !phone || !date) {
+            alert('برجاء إدخال اسم المريض ورقم الموبايل وتاريخ الحجز!');
+            return;
+        }
+
+        const duration = parseInt(select.options[select.selectedIndex].getAttribute('data-duration'));
+        const price = parseInt(select.options[select.selectedIndex].getAttribute('data-price'));
+        const deposit = price * 0.20;
+
+        const slot = await calculateSmartTimeSlot(date, duration);
+        if (slot.assignedStart === -1) {
+            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة!');
+            return;
+        }
+
+        const assignedTimeStr = formatTimeMinutes(slot.assignedStart);
+        const bookingCode = 'PDZ-W-' + Math.floor(1000 + Math.random() * 9000);
+
+        const newBooking = {
+            id: bookingCode,
+            date: date,
+            time: assignedTimeStr,
+            name: name + ' (Walk-in)',
+            phone: phone,
+            service: service,
+            price: price,
+            deposit: deposit,
+            duration: duration,
+            paymentRef: 'دفع بالعيادة',
+            status: 'confirmed',
+            queueNum: slot.queueCount + 1
+        };
+
+        try {
+            await fetch(WEB_APP_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newBooking)
+            });
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            closeWalkinModal();
+            document.getElementById('walkinName').value = '';
+            document.getElementById('walkinPhone').value = '';
+            alert('تم تسجيل مريض Walk-in بنجاح في الميعاد: ' + assignedTimeStr);
+            renderDashboardTable();
+        } catch (e) {
+            console.error(e);
+            alert('حدث خطأ أثناء التسجيل.');
+        }
+    }
+
+    // زر تغيير حالة الحجز بنقرة واحدة (تأكيد / انتظار)
+    async function toggleBookingStatus(bookingId, currentStatus, queueNum, name, phone, service, price, date, time, deposit, paymentRef, duration) {
+        const newStatus = (currentStatus.trim() === 'confirmed') ? 'pending' : 'confirmed';
+        
+        const updatedBooking = {
+            id: bookingId,
+            date: date,
+            time: time,
+            name: name,
+            phone: phone,
+            service: service,
+            price: price,
+            deposit: deposit,
+            duration: duration,
+            paymentRef: paymentRef,
+            status: newStatus,
+            queueNum: queueNum
+        };
+
+        // حذف القديم أولاً ثم إضافة المحدث أو إرسال طلب تحديث
+        try {
+            // أولاً نحذف الصف القديم
+            await fetch(WEB_APP_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'delete', id: bookingId })
+            });
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // ثانياً نضيفه بالحالة الجديدة
+            await fetch(WEB_APP_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatedBooking)
+            });
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            renderDashboardTable();
+        } catch (e) {
+            console.error(e);
+            alert('حدث خطأ أثناء تغيير الحالة.');
+        }
     }
 
     async function renderDashboardTable(isBackground = false) {
@@ -635,9 +782,8 @@
             totalRevenue += Number(b.price || 0);
 
             const isConfirmed = String(b.status).trim() === 'confirmed';
-            const statusBadge = isConfirmed 
-                ? `<span class="status-badge status-confirmed">مؤكد ✅</span>` 
-                : `<span class="status-badge status-pending">انتظار ⏳</span>`;
+            const statusButtonClass = isConfirmed ? 'status-btn confirmed' : 'status-btn pending';
+            const statusText = isConfirmed ? 'مؤكد ✅' : 'انتظار ⏳';
 
             let cleanPhone = String(b.phone).startsWith('0') ? '2' + b.phone : b.phone;
             let waMsg = encodeURIComponent(`مرحباً يا ${b.name}، تم تأكيد حجزك برقم دور (${queueCounter}) في عيادة Peter Dental Zone برقم كود (#${b.id}) في تاريخ ${cleanDate} الساعة ${b.time}. برجاء الحضور قبل الميعاد بـ 10 دقائق وأخذ سكرين شوت للإيصال. ننتظر زيارتك! ✨`);
@@ -652,7 +798,11 @@
                     <td>${b.service}<br><b>${b.price} جـ</b></td>
                     <td><b>${b.time}</b></td>
                     <td><b>${b.deposit} جـ</b><br><small>إيصال: ${b.paymentRef}</small></td>
-                    <td>${statusBadge}</td>
+                    <td>
+                        <button class="${statusButtonClass}" onclick="toggleBookingStatus('${b.id}', '${b.status}', ${queueCounter}, '${b.name}', '${b.phone}', '${b.service}', ${b.price}, '${cleanDate}', '${b.time}', ${b.deposit}, '${b.paymentRef}', ${b.duration || 30})">
+                            ${statusText}
+                        </button>
+                    </td>
                     <td>
                         <a href="${waLink}" target="_blank" class="btn-whatsapp">واتساب 💬</a>
                         <button class="btn-print" onclick="printReceiptDirect('${b.id}', '${queueCounter}', '${b.name}', '${b.phone}', '${b.service}', '${b.price}', '${cleanDate}', '${b.time}', '${b.deposit}', '${b.status}')">طباعة 🖨️</button>
