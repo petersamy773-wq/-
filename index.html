@@ -442,7 +442,6 @@
         }
     }
 
-    // دالة سحب بيانات مباشرة ولحظية بدون كاش قديم لضمان مزامنة الأجهزة بنسبة 100%
     async function fetchFreshBookingsFromSheet() {
         try {
             const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
@@ -493,7 +492,7 @@
         return 30;
     }
 
-    // حساب الوقت الذكي بسحب أحدث بيانات من السيرفر فوراً لمنع تعارض الأجهزة
+    // دالة حساب الوقت الذكي مع تحديد نقطة البداية بناءً على الوقت الفعلي اليوم
     async function calculateSmartTimeSlot(date, duration) {
         let allBookingsList = await fetchFreshBookingsFromSheet();
         const dayBookings = allBookingsList
@@ -509,22 +508,34 @@
         const CLINIC_END = 22 * 60;   // 10:00 مساءً
         const BUFFER = 10;            // استراحة 10 دقائق
 
+        // تحديد نقطة بداية الحساب لليوم الحالي
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+        let baselineStart = CLINIC_START;
+
+        if (date === todayStr) {
+            let currentMinutes = now.getHours() * 60 + now.getMinutes();
+            // لو الوقت الحالي بعد بداية العيادة، نبدأ من الوقت الحالي، وإلا فنبدأ من 2 ظهراً
+            baselineStart = Math.max(CLINIC_START, currentMinutes);
+        }
+
         let assignedStart = -1;
         let assignedEnd = -1;
 
         if (dayBookings.length === 0) {
-            assignedStart = CLINIC_START;
-            assignedEnd = CLINIC_START + duration;
+            assignedStart = baselineStart;
+            assignedEnd = baselineStart + duration;
         } else {
-            if (dayBookings[0].startMin - CLINIC_START >= duration) {
-                assignedStart = CLINIC_START;
-                assignedEnd = CLINIC_START + duration;
+            // التحقق هل يمكن الحجز قبل أول مريض في الجدول؟
+            if (dayBookings[0].startMin - baselineStart >= duration) {
+                assignedStart = baselineStart;
+                assignedEnd = baselineStart + duration;
             } else {
                 let foundGap = false;
                 for (let i = 0; i < dayBookings.length; i++) {
                     let currentEndWithBuffer = dayBookings[i].endMin + BUFFER;
                     let nextStart = (i < dayBookings.length - 1) ? dayBookings[i + 1].startMin : CLINIC_END;
-                    let availableSlotStart = Math.max(CLINIC_START, currentEndWithBuffer);
+                    let availableSlotStart = Math.max(baselineStart, currentEndWithBuffer);
 
                     if (nextStart - availableSlotStart >= duration) {
                         assignedStart = availableSlotStart;
@@ -535,7 +546,7 @@
                 }
                 if (!foundGap) {
                     let lastBooking = dayBookings[dayBookings.length - 1];
-                    let potentialStart = Math.max(CLINIC_START, lastBooking.endMin + BUFFER);
+                    let potentialStart = Math.max(baselineStart, lastBooking.endMin + BUFFER);
                     if (potentialStart + duration <= CLINIC_END) {
                         assignedStart = potentialStart;
                         assignedEnd = potentialStart + duration;
@@ -580,7 +591,7 @@
         const slot = await calculateSmartTimeSlot(date, duration);
 
         if (slot.assignedStart === -1 || slot.assignedEnd > 1320) {
-            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً أو لا توجد فترة متصلة تكفي مدة هذه الخدمة، برجاء اختيار يوم آخر.');
+            alert('عذراً، أوقات العيادة لهذا اليوم مكتملة تماماً أو انتهت الأوقات المتاحة، برجاء اختيار يوم آخر.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'احصل على ميعادك الذكي وتأكيد فوري';
             isSubmitting = false;
@@ -614,7 +625,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newBooking)
             });
-            await new Promise(r => setTimeout(r, 1200)); // انتظار استقرار الشيت
+            await new Promise(r => setTimeout(r, 1200));
         } catch (e) {
             console.error(e);
         }
